@@ -1,13 +1,15 @@
-from .nodes import *
+from .regex_nodes import RegexNode, ExtractTagFromString, AutoExtractTags, ChainReplace
 
-
-#  Map all your custom nodes classes with the names that will be displayed in the UI.
 NODE_CLASS_MAPPINGS = {
-    "(Down)Load My Model": MyModelLoader,
-    "Calculate Plus": CalculatePlus,
-    "Calculate Minus": CalculateMinus,
-    "Example Output Node": ExampleOutputNode,
+    "RegexNode": RegexNode,
+    "ExtractTagFromString": ExtractTagFromString,
+    "AutoExtractTags": AutoExtractTags,
+    "ChainReplace": ChainReplace,
 }
 
-
-__all__ = ['NODE_CLASS_MAPPINGS']
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "RegexNode": "Regex Operations",
+    "ExtractTagFromString": "Extract Tag From String",
+    "AutoExtractTags": "Auto Extract Tags From String",
+    "ChainReplace": "Chain Replace String",
+}
