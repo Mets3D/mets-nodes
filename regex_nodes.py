@@ -1,4 +1,4 @@
-import re
+import re, random
 from typing import Tuple
 
 class RegexNode:
@@ -132,6 +132,141 @@ class AutoExtractTags:
                 all_contents.append(content)
 
         return clean_text.strip(), ", ".join(all_contents)
+
+class StableRandomChoiceNode:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "prompt": ("STRING", {"description": "Input string with {option1|option2|...} groups, supports nesting."}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 2**31 - 1, "description": "Base seed for stable randomness."}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    FUNCTION = "randomize_prompt"
+    CATEGORY = "Text"
+    DESCRIPTION="""Processes strings with nested {option1|option2|...} syntax.
+    It selects one random option per group using a stable seed and a counter-based RNG,
+    ensuring consistent output even if unrelated parts of the input change."""
+
+
+    def randomize_prompt(self, prompt, seed=0):
+        randomized = randomize_prompt(prompt, seed)
+        return (randomized, )
+
+def randomize_prompt(prompt, seed=0) -> str:
+    """
+    Process the input text, recursively replacing each {...|...} group
+    with one option selected randomly and stably based on the seed.
+
+    Args:
+        text (str): Input string with nested option groups.
+        seed (int): Base seed to control randomness and ensure reproducibility.
+
+    Returns:
+        tuple(str): Processed string with all groups resolved.
+    """
+    counter = 0  # Counts number of choices made so far, used in seed.
+
+    pattern = re.compile(r'\{([^{}]*)\}')
+    def helper(t):
+        nonlocal counter
+        match = pattern.search(t)
+        if not match:
+            return t
+
+        options = match.group(1).split('|')
+        choice_seed = seed + counter
+        rand = random.Random(choice_seed)
+        choice = rand.choice(options)
+
+        counter += 1
+        t = t[:match.start()] + choice + t[match.end():]
+        return helper(t)
+
+    prompt = prettify_prompt(prompt)
+    prompt = helper(prompt)
+    return prompt
+
+def pretty_format(prompt, indent_str="  "):
+    result = []
+    depth = 0
+    i = 0
+    length = len(prompt)
+
+    while i < length:
+        c = prompt[i]
+
+        if c == '{':
+            result.append('{\n')
+            depth += 1
+            result.append(indent_str * depth)
+            i += 1
+        elif c == '}':
+            depth -= 1
+            result.append('\n' + indent_str * depth + '}')
+            i += 1
+            # Peek next non-space char to decide whether to add newline+indent or not
+            j = i
+            while j < length and prompt[j] == ' ':
+                j += 1
+            if j < length and prompt[j] in ('{', '|'):
+                # Add newline+indent before next block or option
+                result.append('\n' + indent_str * depth)
+            else:
+                # Just continue without adding newline (so trailing spaces/text stay inline)
+                pass
+        elif c == '|':
+            result.append('|\n' + indent_str * depth)
+            i += 1
+        else:
+            result.append(c)
+            i += 1
+
+    return ''.join(result)
+
+def sanitize_prompt(prompt: str) -> str:
+    """
+    Cleans and joins a multiline prompt into a well-formatted, comma-separated string.
+    - Adds commas at the end of each line unless the line ends with { or (
+    - Removes junk commas (like before |, }, or ))
+    - Collapses excessive whitespace and empty lines
+    """
+    lines = prompt.splitlines()
+    cleaned_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Skip empty lines
+        if not stripped:
+            continue
+
+        # If it ends with { or (, leave it alone
+        if re.search(r'[{(]$', stripped):
+            cleaned_lines.append(stripped)
+        else:
+            # Remove trailing commas, then add one cleanly
+            stripped = re.sub(r',+$', '', stripped)
+            cleaned_lines.append(f"{stripped},")
+
+    # Join with spaces or commas depending on your preference
+    joined = ' '.join(cleaned_lines)
+
+    # Remove commas before special closing symbols like }, ), |
+    joined = re.sub(r',\s*([}\)|])', r'\1', joined)
+
+    # Collapse multiple commas
+    joined = re.sub(r',\s*,+', ',', joined)
+
+    # Final trim
+    return joined.strip(' ,')
+
+def prettify_prompt(prompt: str) -> str:
+    prompt = re.sub(r"#.*", "", prompt)
+    prompt = sanitize_prompt(prompt)
+    return pretty_format(prompt)
 
 def extract_tag_from_text(
     text: str,
