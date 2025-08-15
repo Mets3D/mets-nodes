@@ -20,7 +20,7 @@ class RegexNode:
 
     RETURN_TYPES = ("STRING",)
     FUNCTION = "execute_regex"
-    CATEGORY = "text"
+    CATEGORY = "MetsNodes"
 
     def execute_regex(self, input_text, pattern, replace_with="", mode="search") -> Tuple[str]:
         try:
@@ -48,7 +48,7 @@ class ChainReplace:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("string_replaced",)
     FUNCTION = "replace_string"
-    CATEGORY = "Text/Tag Tools"
+    CATEGORY = "MetsNodes/Tag Tools"
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -72,7 +72,7 @@ class ExtractTagFromString:
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("clean_text", "tag_content")
     FUNCTION = "extract"
-    CATEGORY = "Text/Tag Tools"
+    CATEGORY = "MetsNodes/Tag Tools"
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -100,7 +100,7 @@ class AutoExtractTags:
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("clean_text", "tag_content")
     FUNCTION = "auto_extract"
-    CATEGORY = "Text/Tag Tools"
+    CATEGORY = "MetsNodes/Tag Tools"
     DESCRIPTION = ("Automatically remove all tags, as well as the contents of those tags which have a <!tag> present.\n"
     "For example, if you want to randomize facial expressions, you could use this node after a prompt processor, like this:\n"
     "<eye>blue eyes</eye>, {eyes open|winking, one eye open|eyes closed, blink, <!eye>}\n"
@@ -145,7 +145,7 @@ class StableRandomChoiceNode:
 
     RETURN_TYPES = ("STRING",)
     FUNCTION = "randomize_prompt"
-    CATEGORY = "Text"
+    CATEGORY = "MetsNodes"
     DESCRIPTION="""Processes strings with nested {option1|option2|...} syntax.
     It selects one random option per group using a stable seed and a counter-based RNG,
     ensuring consistent output even if unrelated parts of the input change."""
