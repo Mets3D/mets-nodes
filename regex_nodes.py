@@ -61,6 +61,8 @@ class ChainReplace:
         }
 
     def replace_string(self, text: str, replace_with: str, replaced_by: str) -> Tuple[str]:
+        if not replaced_by:
+            return text
         return (text.replace(replaced_by, replace_with),)
 
 class ExtractTagFromString:
