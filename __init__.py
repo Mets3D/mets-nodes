@@ -2,6 +2,7 @@ from .regex_nodes import (
     RegexNode, ExtractTagFromString, AutoExtractTags, ChainReplace,
     StableRandomChoiceNode,
 )
+from .model_downloader import DownloadCivitaiModel
 
 NODE_CLASS_MAPPINGS = {
     "RegexNode": RegexNode,
@@ -9,6 +10,8 @@ NODE_CLASS_MAPPINGS = {
     "AutoExtractTags": AutoExtractTags,
     "ChainReplace": ChainReplace,
     "StableRandomChoiceNode": StableRandomChoiceNode,
+
+    "DownloadCivitaiModel": DownloadCivitaiModel,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -16,4 +19,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ExtractTagFromString": "Extract Tag From String",
     "AutoExtractTags": "Auto Extract Tags From String",
     "StableRandomChoiceNode": "Random Choice",
+
+    "DownloadCivitaiModel": "Download CivitAI Model",
 }
