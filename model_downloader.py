@@ -31,7 +31,7 @@ class DownloadCivitaiModel:
 
     def download_model(self, model_url, subdir, api_token, filename="", version=""):
         # --- 1. Extract model ID ---
-        m = re.search(r"/models/(\d+)(?:/|$|/?)", model_url)
+        m = re.search(r"/models/(\d+)(?:/|$|\?)", model_url)
         if not m:
             raise ValueError("Invalid CivitAI model URL")
         model_id = int(m.group(1))
