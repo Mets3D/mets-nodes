@@ -192,6 +192,8 @@ def randomize_prompt(prompt, seed=0) -> str:
     return prompt
 
 def pretty_format(prompt, indent_str="  "):
+    # logic below is a bit buggy.
+    return prompt
     result = []
     depth = 0
     i = 0
