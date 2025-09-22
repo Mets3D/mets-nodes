@@ -3,6 +3,7 @@ from .regex_nodes import (
     StableRandomChoiceNode, PromptTidy, 
 )
 from .model_downloader import DownloadCivitaiModel
+from .mega_prompt import MegaPrompt, MetContextBreak, MetFaceContextBreak, MetPrepareCheckpoint
 
 NODE_CLASS_MAPPINGS = {
     "RegexNode": RegexNode,
@@ -13,6 +14,11 @@ NODE_CLASS_MAPPINGS = {
     "PromptTidy": PromptTidy,
 
     "DownloadCivitaiModel": DownloadCivitaiModel,
+
+    "MegaPrompt": MegaPrompt,
+    "ContextBreak": MetContextBreak,
+    "FaceContextBreak": MetFaceContextBreak,
+    "PrepareCheckpoint": MetPrepareCheckpoint,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -23,4 +29,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PromptTidy": "Tidy Prompt",
 
     "DownloadCivitaiModel": "Download CivitAI Model",
+
+    "MegaPrompt": "Mega Prompt",
+    "ContextBreak": "Context Break",
+    "FaceContextBreak": "Face Context Break",
+    "PrepareCheckpoint": "Prepare Checkpoint",
 }

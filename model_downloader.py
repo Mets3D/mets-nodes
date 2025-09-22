@@ -21,15 +21,16 @@ class DownloadCivitaiModel:
             "optional": {
                 "filename": ("STRING", {"tooltip": "(Optional.) Filename (without extension) to rename the file to."}),
                 "version": ("STRING", {"tooltip": "(Optional.) Name (not ID) of the model version to download. Many Loras might come with versions like SDXL/Illustrious/Pony, or V1, V2, V3. If you enter nothing, the 'last' (left-most) will be downloaded."}),
-            },
+            }
         }
 
-    RETURN_TYPES = ()
+    RETURN_TYPES = ('STRING',)
+    RETURN_NAMES = ("api_token",)
     OUTPUT_NODE = True
     FUNCTION = "download_model"
     CATEGORY = "MetsNodes"
 
-    def download_model(self, model_url, subdir, api_token, filename="", version=""):
+    def download_model(self, api_token, model_url, subdir, filename="", version=""):
         # --- 1. Extract model ID ---
         m = re.search(r"/models/(\d+)(?:/|$|\?)", model_url)
         if not m:
@@ -130,4 +131,4 @@ class DownloadCivitaiModel:
                     f.write(chunk)
 
         print(f"[CivitAI] Saved to: {target_path}")
-        return ()
+        return (api_token,)
