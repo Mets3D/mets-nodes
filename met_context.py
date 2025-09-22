@@ -55,35 +55,4 @@ class MetFaceContext:
     pos_prompt: str = "detailed face"
     neg_prompt: str = ""
     noise_seed: int = -1
-    prompt_seed: int = -1
     loras: list[str] = field(default_factory=list)
-
-CHECKPOINTS = {
-    'WAINSFW': MetCheckpointPreset(
-        path='ILL-wainsfw',
-        civitai_model_id=827184,
-        clip_skip=-2,
-        steps=40,
-        cfg=5.0,
-        sampler='euler_ancestral',
-        scheduler='normal',
-    ),
-    'UnholyCrimson4': MetCheckpointPreset(
-        path='NAI-unholy_crimson-4',
-        civitai_model_id=1494558,
-        clip_skip=-2,
-        steps=25,
-        cfg=3.5,
-        sampler='euler_ancestral',
-        scheduler='normal',
-    ),
-    'UnholySinister': MetCheckpointPreset(
-        path='ILL-unholy_sinister',
-        civitai_model_id=1307857,
-        clip_skip=-2,
-        steps=25,
-        cfg=3.5,
-        sampler='euler_ancestral',
-        scheduler='normal',
-    ),
-}

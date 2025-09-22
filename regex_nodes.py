@@ -110,29 +110,31 @@ class AutoExtractTags:
     )
 
     def auto_extract(self, text: str) -> Tuple[str, str]:
-        import re
+        return auto_extract_tags(text)
 
-        # Find all <!tag> directives
-        marker_pattern = r"<!((?:\w|\s)+)>"
-        tags_marked_for_removal = set(re.findall(marker_pattern, text))
-        text = re.sub(marker_pattern, "", text)
+def auto_extract_tags(text: str) -> tuple[str, str]:
+    # Find all <!tag> instructions
+    marker_pattern = r"<!((?:\w|\s)+)>"
+    tags_marked_for_removal = set(re.findall(marker_pattern, text))
+    text = re.sub(marker_pattern, "", text)
 
-        # Detect all tag names present
-        all_tag_names = set(re.findall(r"<\/((?:\w|\s)+)>", text))
+    # Detect all tag names present
+    all_tag_names = set(re.findall(r"<\/((?:\w|\s)+)>", text))
 
-        clean_text = text
-        tag_contents = []
-        for tag in all_tag_names:
-            do_remove_content = tag in tags_marked_for_removal
-            # Extract tag content and remove the tags themselves, no matter what.
-            clean_text, content = extract_tag_from_text(
-                clean_text, tag, remove_content=do_remove_content
-            )
-            # Remove tag content, only if it's marked for exclusion.
-            if do_remove_content and content:
-                tag_contents.append(content)
+    clean_text = text
+    tag_contents = []
+    for tag in all_tag_names:
+        do_remove_content = tag in tags_marked_for_removal
+        # Extract tag content and remove the tags themselves, no matter what.
+        clean_text, content = extract_tag_from_text(
+            clean_text, tag, remove_content=do_remove_content
+        )
+        # Remove tag content, only if it's marked for exclusion.
+        if do_remove_content and content:
+            tag_contents.append(content)
 
-        return clean_text.strip(), ", ".join(tag_contents)
+    return clean_text.strip(), ", ".join(tag_contents)
+
 
 class StableRandomChoiceNode:
     @classmethod
