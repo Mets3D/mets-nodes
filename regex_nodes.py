@@ -114,26 +114,25 @@ class AutoExtractTags:
 
         # Find all <!tag> directives
         marker_pattern = r"<!((?:\w|\s)+)>"
-        tags_remove_content = set(re.findall(marker_pattern, text))
+        tags_marked_for_removal = set(re.findall(marker_pattern, text))
         text = re.sub(marker_pattern, "", text)
 
         # Detect all tag names present
         all_tag_names = set(re.findall(r"<\/((?:\w|\s)+)>", text))
 
-        # Start processing
         clean_text = text
-        all_contents = []
-
+        tag_contents = []
         for tag in all_tag_names:
-            remove_content = tag in tags_remove_content
-            # Remove content if it's explicitly marked, else preserve it
+            do_remove_content = tag in tags_marked_for_removal
+            # Extract tag content and remove the tags themselves, no matter what.
             clean_text, content = extract_tag_from_text(
-                clean_text, tag, remove_content=remove_content
+                clean_text, tag, remove_content=do_remove_content
             )
-            if remove_content and content:
-                all_contents.append(content)
+            # Remove tag content, only if it's marked for exclusion.
+            if do_remove_content and content:
+                tag_contents.append(content)
 
-        return clean_text.strip(), ", ".join(all_contents)
+        return clean_text.strip(), ", ".join(tag_contents)
 
 class StableRandomChoiceNode:
     @classmethod
@@ -152,10 +151,26 @@ class StableRandomChoiceNode:
     It selects one random option per group using a stable seed and a counter-based RNG,
     ensuring consistent output even if unrelated parts of the input change."""
 
-
     def randomize_prompt(self, prompt, seed=0):
         randomized = randomize_prompt(prompt, seed)
         return (randomized, )
+
+class PromptTidy:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "prompt": ("STRING", {"description": "Input prompt."}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    FUNCTION = "tidy_prompt"
+    CATEGORY = "MetsNodes"
+    DESCRIPTION="""Remove excess commas, newlines, whitespaces from a prompt-style string."""
+
+    def tidy_prompt(self, prompt):
+        return (tidy_prompt(prompt), )
 
 def randomize_prompt(prompt, seed=0) -> str:
     """
@@ -187,90 +202,27 @@ def randomize_prompt(prompt, seed=0) -> str:
         t = t[:match.start()] + choice + t[match.end():]
         return helper(t)
 
-    prompt = prettify_prompt(prompt)
     prompt = helper(prompt)
+    prompt = tidy_prompt(prompt)
     return prompt
 
-def pretty_format(prompt, indent_str="  "):
-    # logic below is a bit buggy.
+def tidy_prompt(prompt: str) -> str:
+    prompt = remove_comment_lines(prompt)
+    new_lines = []
+    for line in prompt.split("\n"):
+        line = line.strip()
+        if line.startswith(","):
+            line = line[1:]
+        line = re.sub(r"(\s*,\s*)+", ", ", line)
+        line = line.strip()
+        new_lines.append(line)
+    prompt = "\n".join(new_lines)
+    prompt = re.sub(r"\n\n+", "\n\n", prompt)
+
     return prompt
-    result = []
-    depth = 0
-    i = 0
-    length = len(prompt)
 
-    while i < length:
-        c = prompt[i]
-
-        if c == '{':
-            result.append('{\n')
-            depth += 1
-            result.append(indent_str * depth)
-            i += 1
-        elif c == '}':
-            depth -= 1
-            result.append('\n' + indent_str * depth + '}')
-            i += 1
-            # Peek next non-space char to decide whether to add newline+indent or not
-            j = i
-            while j < length and prompt[j] == ' ':
-                j += 1
-            if j < length and prompt[j] in ('{', '|'):
-                # Add newline+indent before next block or option
-                result.append('\n' + indent_str * depth)
-            else:
-                # Just continue without adding newline (so trailing spaces/text stay inline)
-                pass
-        elif c == '|':
-            result.append('|\n' + indent_str * depth)
-            i += 1
-        else:
-            result.append(c)
-            i += 1
-
-    return ''.join(result)
-
-def sanitize_prompt(prompt: str) -> str:
-    """
-    Cleans and joins a multiline prompt into a well-formatted, comma-separated string.
-    - Adds commas at the end of each line unless the line ends with { or (
-    - Removes junk commas (like before |, }, or ))
-    - Collapses excessive whitespace and empty lines
-    """
-    lines = prompt.splitlines()
-    cleaned_lines = []
-
-    for line in lines:
-        stripped = line.strip()
-
-        # Skip empty lines
-        if not stripped:
-            continue
-
-        # If it ends with { or (, leave it alone
-        if re.search(r'[{(]$', stripped):
-            cleaned_lines.append(stripped)
-        else:
-            # Remove trailing commas, then add one cleanly
-            stripped = re.sub(r',+$', '', stripped)
-            cleaned_lines.append(f"{stripped},")
-
-    # Join with spaces or commas depending on your preference
-    joined = ' '.join(cleaned_lines)
-
-    # Remove commas before special closing symbols like }, ), |
-    joined = re.sub(r',\s*([}\)|])', r'\1', joined)
-
-    # Collapse multiple commas
-    joined = re.sub(r',\s*,+', ',', joined)
-
-    # Final trim
-    return joined.strip(' ,')
-
-def prettify_prompt(prompt: str) -> str:
-    prompt = re.sub(r"#.*", "", prompt)
-    prompt = sanitize_prompt(prompt)
-    return pretty_format(prompt)
+def remove_comment_lines(prompt: str) -> str:
+    return re.sub(r"#.*", "", prompt)
 
 def extract_tag_from_text(
     text: str,
