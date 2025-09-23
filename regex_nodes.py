@@ -2,9 +2,8 @@ import re, random
 from typing import Tuple
 
 class RegexNode:
-    def __init__(self):
-        pass
-    
+    NAME = "Regex Operations"
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -44,6 +43,7 @@ class RegexNode:
             return ("",)
 
 class ChainReplace:
+    NAME="Chain Replace"
     DESCRIPTION = ("A simple string search and replace operation that is designed to nicely chain together. Can be used to build complex randomized prompts.")
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("string_replaced",)
@@ -66,6 +66,7 @@ class ChainReplace:
         return (text.replace(replaced_by, replace_with),)
 
 class ExtractTagFromString:
+    NAME = "Extract Tag From String"
     DESCRIPTION = (
         "Extract a specified <tag> from a string. Examples:\n"
         "Put <neg>bad quality</neg> into your prompt, and then use this node to extract it and feed it to your negative prompt.\n"
@@ -91,6 +92,7 @@ class ExtractTagFromString:
         return clean_text.strip(), content
 
 class AutoExtractTags:
+    NAME="Auto Extract Tags From String"
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -137,6 +139,7 @@ def auto_extract_tags(text: str) -> tuple[str, str]:
 
 
 class StableRandomChoiceNode:
+    NAME="Random Choice"
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -158,6 +161,7 @@ class StableRandomChoiceNode:
         return (randomized, )
 
 class PromptTidy:
+    NAME="Tidy Prompt"
     @classmethod
     def INPUT_TYPES(cls):
         return {

@@ -23,6 +23,7 @@ RE_CONTEXT_TAGS = re.compile(rf"<{CONTEXT_PREFIX}.*?>")
 RE_EXCLUDE = re.compile(r"<!((?:\w|\s)+)>")
 
 class MegaPrompt:
+    NAME = "Mega Prompt"
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -238,7 +239,8 @@ def extract_face_prompts(context: MetContext) -> tuple[str, str]:
     neg = remove_all_tag_syntax(tidy_prompt(neg))
     return pos, neg
 
-class MetContextBreak:
+class ContextBreak:
+    NAME = "Context Break"
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -293,7 +295,8 @@ class MetContextBreak:
             Context.add_noise,
         )
 
-class MetFaceContextBreak:
+class FaceContextBreak:
+    NAME = "Face Context Break"
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -344,7 +347,8 @@ class MetFaceContextBreak:
             FaceContext.face_iterations,
         )
 
-class MetPrepareCheckpoint:
+class PrepareCheckpoint:
+    NAME = "Prepare Checkpoint"
     DESCRIPTION = ("A simple string search and replace operation that is designed to nicely chain together. Can be used to build complex randomized prompts.")
     RETURN_NAMES, RETURN_TYPES = map(list, zip(*{"Checkpoint Datas": 'CHECKPOINT_DATAS'}.items()))
     FUNCTION = "prepare_checkpoint"
@@ -386,6 +390,7 @@ class MetPrepareCheckpoint:
         return (checkpoint_datas,)
 
 class TagStacker:
+    NAME = "Tag Stacker"
     DESCRIPTION = ("Define a tag, which can be plugged into the MegaPrompt node, and un-furled using the <tag> syntax.")
     RETURN_NAMES, RETURN_TYPES = map(list, zip(*{"Tag Stack": 'TAG_STACK'}.items()))
     FUNCTION = "add_tag"

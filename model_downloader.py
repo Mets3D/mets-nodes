@@ -9,6 +9,7 @@ class DownloadCivitaiModel:
     """
     Download a .safetensors file from CivitAI, unless it is already present at the specified location.
     """
+    NAME="Download CivitAI Model"
 
     @classmethod
     def INPUT_TYPES(cls):

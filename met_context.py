@@ -39,8 +39,6 @@ class MetContext:
     noise_seed: int = -1
     prompt_seed: int = -1
     loras: list[str] = field(default_factory=list)
-    use_model_pos_prompt: bool = True
-    use_model_neg_prompt: bool = True
 
     # Render settings.
     width: int = 1024
