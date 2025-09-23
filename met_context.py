@@ -43,7 +43,7 @@ class MetContext:
     # Render settings.
     width: int = 1024
     height: int = 1024
-    scale: float = 1
+    scale: float = 1.0
     add_noise: float = 0.5
 
     def copy(self):

@@ -1,11 +1,10 @@
 import re, os, random
-
 from .met_context import MetCheckpointPreset, MetContext, MetFaceContext
 import folder_paths
 import comfy.samplers
 # NOTE: Requires Impact Pack, sadly.
 import impact.core as core
-from .regex_nodes import randomize_prompt, extract_tag_from_text, tidy_prompt
+from .regex_nodes import randomize_prompt, extract_tag_from_text, remove_comment_lines, tidy_prompt
 
 NEG_TAG = "neg"
 FACE_TAG = "face"
@@ -16,10 +15,9 @@ FORCE_LANDSCAPE = "<ratio:landscape>"
 FORCE_SQUARE = "<ratio:square>"
 CONTEXT_PREFIX = "context_"
 
-RE_CHECKPOINT = re.compile(r"<checkpoint:(.*?)(,(.*?))?>")
 RE_LORA = re.compile(r"<lora.*?>")
 RE_TAG_NAMES = re.compile(r"<\/((?:\w|\s|!)+)>")
-RE_CONTEXT_TAGS = re.compile(rf"<{CONTEXT_PREFIX}.*?>")
+RE_CONTEXT_TAGS = re.compile(rf"(<({CONTEXT_PREFIX}[^:>]+)(?::(.*))?>)((?:\s|.)*?)(<\/\2>)")
 RE_EXCLUDE = re.compile(r"<!((?:\w|\s)+)>")
 
 class MegaPrompt:
@@ -69,12 +67,16 @@ class MegaPrompt:
                 contexts.append(None)
                 continue
 
-            ctx_pos = extract_context_tags(prompt_pos, str(i))
-            ctx_neg = extract_context_tags(prompt_neg, str(i))
-            # Extract which checkpoint to use, specified by <checkpoint:identifier>.
-            ctx_pos, ctx_neg, checkpoint = apply_checkpoint_data(ctx_pos, ctx_neg, checkpoint_datas)
+            # Extract which checkpoint to use for this context, and with what overridden parameters (if any).
+            ctx_pos, ctx_params = extract_context_tags(prompt_pos, str(i))
+            ctx_neg, _ = extract_context_tags(prompt_neg, str(i))
+
+            checkpoint = checkpoint_datas.get(ctx_params.pop('checkpoint'), None)
             if not checkpoint:
                 raise Exception(f"MegaPrompt error: A checkpoint is not specified for Context {i}.\nDo so by plugging in at least one Context Data, and then triggering it in the positive prompt using <checkpoint:name_of_checkpoint>.")
+
+            # Apply the checkpoint's associated +/- prompts..
+            ctx_pos, ctx_neg = apply_checkpoint_prompt(ctx_pos, ctx_neg, checkpoint)
 
             # Extract lora tags.
             lora_tags = extract_lora_tags(ctx_pos)
@@ -94,7 +96,7 @@ class MegaPrompt:
             ctx_pos = remove_all_tag_syntax(tidy_prompt(ctx_pos))
             ctx_neg = remove_all_tag_syntax(tidy_prompt(ctx_neg))
 
-            contexts.append(MetContext(
+            context = MetContext(
                 checkpoint=checkpoint,
                 # NOTE: It's important to offset the noise seed for subsequent samplers.
                 # Stacking results of different checkpoints with the same noise pattern has poor results for some reason.
@@ -105,20 +107,39 @@ class MegaPrompt:
                 pos_prompt=ctx_pos,
                 neg_prompt=ctx_neg,
                 loras=lora_tags,
-            ))
+            )
+            for obj in (context, checkpoint):
+                for key, value in ctx_params.items():
+                    if hasattr(obj, key):
+                        val_type = type(getattr(obj, key))
+                        value = val_type(value)
+                        setattr(obj, key, value)
+
+            # TODO: consider adding an equality check to previous context to avoid adding the same context multiple times, since that's kinda pointless.
+            # Would also allow us to remove the num_context input, since it would become implicit. (maybe add a default checkpoint input instead so we aren't forced to use context def syntax)
+
+            contexts.append(context)
 
         last_context = next(c for c in reversed(contexts) if c)
         face_pos, face_neg = extract_face_prompts(last_context)
 
-        face_context = MetFaceContext(
-            checkpoint=last_context.checkpoint,
-            face_iterations=1,
-            face_noise_amount=0.32,
-            pos_prompt=face_pos,
-            neg_prompt=face_neg,
-            noise_seed=last_context.noise_seed+4,
-            loras=last_context.loras,
-        ) if use_facedetailer else None
+        face_context = None
+        if use_facedetailer:
+            face_context = MetFaceContext(
+                checkpoint=last_context.checkpoint,
+                face_iterations=1,
+                face_noise_amount=0.32,
+                pos_prompt=face_pos,
+                neg_prompt=face_neg,
+                noise_seed=last_context.noise_seed+4,
+                loras=last_context.loras,
+            )
+            for key, value_str in overrides.items():
+                if hasattr(face_context, key):
+                    val_type = type(getattr(face_context, key))
+                    value = val_type(value_str)
+                    setattr(face_context, key, value)
+
         return (*contexts, face_context)
 
 def unroll_tag_stack(prompt: str, tag_stack: dict[str, str]) -> str:
@@ -161,33 +182,20 @@ def override_width_height(prompt, width, height) -> tuple[int, int, str]:
         return average, average, prompt.replace(FORCE_SQUARE, "")
     return width, height, prompt
 
-def apply_checkpoint_data(prompt_pos: str, prompt_neg: str, checkpoint_datas: dict[str, MetCheckpointPreset]) -> tuple[str, str, MetCheckpointPreset|None]:
-    match = RE_CHECKPOINT.search(prompt_pos)
-    checkpoint_name = match.group(1) if match else ""
-    checkpoint: MetCheckpointPreset|None = checkpoint_datas.get(checkpoint_name.strip()).copy()
+def apply_checkpoint_prompt(prompt_pos: str, prompt_neg: str, checkpoint:MetCheckpointPreset) -> tuple[str, str]:
+    if FORCE_NO_CP_PROMPT not in prompt_pos:
+        # Put checkpoint's quality tags at START of +prompt. (maybe not important)
+        prompt_pos = ",\n".join([checkpoint.model_pos_prompt, prompt_pos])
+    else:
+        prompt_pos = prompt_pos.replace(FORCE_NO_CP_PROMPT, "")
 
-    if match and checkpoint:
-        overrides = match.group(3)
-        for override in overrides.split(","):
-            if ":" not in override:
-                continue
-            key, value = override.split(":")
-            key, value = key.strip(), value.strip()
-            if hasattr(checkpoint, key):
-                setattr(checkpoint, key, type(getattr(checkpoint, key))(value))
-        if FORCE_NO_CP_PROMPT not in prompt_pos:
-            # Put checkpoint's quality tags at START of +prompt. (maybe not important)
-            prompt_pos = ",\n".join([checkpoint.model_pos_prompt, RE_CHECKPOINT.sub("", prompt_pos)])
-        else:
-            prompt_pos = prompt_pos.replace(FORCE_NO_CP_PROMPT, "")
+    if FORCE_NO_CP_PROMPT not in prompt_neg:
+        # Put checkpoint's negative tags at END of -prompt. (maybe not important)
+        prompt_neg += checkpoint.model_neg_prompt
+    else:
+        prompt_neg = prompt_neg.replace(FORCE_NO_CP_PROMPT, "")
 
-        if FORCE_NO_CP_PROMPT not in prompt_neg:
-            # Put checkpoint's negative tags at END of -prompt. (maybe not important)
-            prompt_neg = ",\n".join([RE_CHECKPOINT.sub("", prompt_neg), checkpoint.model_neg_prompt])
-        else:
-            prompt_neg = prompt_neg.replace(FORCE_NO_CP_PROMPT, "")
-
-    return prompt_pos, prompt_neg, checkpoint
+    return prompt_pos, prompt_neg
 
 def extract_lora_tags(prompt: str) -> list[str]:
     return RE_LORA.findall(prompt)
@@ -196,14 +204,18 @@ def reorder_prompt(prompt: str) -> str:
     prompt_pos, tag_content = extract_tag_from_text(prompt, TOP_TAG, remove_content=True)
     return ", ".join([tag_content, prompt_pos])
 
-def extract_context_tags(prompt: str, context_id: str) -> str:
-    for context_tag in RE_CONTEXT_TAGS.findall(prompt):
-        if context_tag == f"<{CONTEXT_PREFIX + str(context_id)}>":
-            prompt, _discard = extract_tag_from_text(prompt, context_tag[1:-1], remove_content=False)
+def extract_context_tags(prompt: str, context_id: str) -> tuple[str, dict[str, str]]:
+    props = {}
+    for tag_start, ctx_name, ctx_props, ctx_prompt, tag_end in RE_CONTEXT_TAGS.findall(prompt):
+        whole_thing = tag_start+ctx_prompt+tag_end
+        if ctx_name == CONTEXT_PREFIX + str(context_id):
+            prompt = prompt.replace(tag_start, "").replace(tag_end, "")
+            if ctx_props:
+                props = {k.strip(): v.strip() for k, v in (pair.split("=") for pair in ctx_props.split(","))}
         else:
-            prompt, _discard = extract_tag_from_text(prompt, context_tag[1:-1], remove_content=True)
+            prompt = prompt.replace(whole_thing, "")
 
-    return prompt
+    return prompt, props
 
 def remove_excluded_tags(prompt: str) -> str:
     # Find all <!tag> instructions.
@@ -407,5 +419,5 @@ class TagStacker:
         }
 
     def add_tag(self, tag_stack={}, tag="", content=""):
-        tag_stack.update({tag: content})
+        tag_stack.update({tag: remove_comment_lines(content)})
         return (tag_stack,)
