@@ -18,7 +18,7 @@ CONTEXT_PREFIX = "context_"
 
 RE_CHECKPOINT = re.compile(r"<checkpoint:([^>]+)>")
 RE_LORA = re.compile(r"<lora.*?>")
-RE_TAG_NAMES = re.compile(r"<\/((?:\w|\s)+)>")
+RE_TAG_NAMES = re.compile(r"<\/((?:\w|\s|!)+)>")
 RE_CONTEXT_TAGS = re.compile(rf"<{CONTEXT_PREFIX}.*?>")
 RE_EXCLUDE = re.compile(r"<!((?:\w|\s)+)>")
 
@@ -27,6 +27,8 @@ class MegaPrompt:
     def INPUT_TYPES(cls):
         return {
             "required": {
+                "num_contexts": ("INT", {"tooltip": "How many contexts should be used.", "min": 1, "max": 4, "default": 1}),
+                "use_facedetailer": ("BOOLEAN", {"tooltip": "Whether facedetailer should be used or not."}),
                 "prompt_pos": ("STRING", {"multiline": True, "tooltip": "The base positive prompt."}),
                 "prompt_neg": ("STRING", {"multiline": True, "tooltip": "The base negative prompt."}),
                 "prompt_seed": ("INT", {"control_after_generate": True, "tooltip": "Prompt randomization seed."}),
@@ -46,7 +48,9 @@ class MegaPrompt:
     CATEGORY = "MetsNodes"
     DESCRIPTION="""Process the mega prompt into 4 consecutive rendering contexts."""
 
-    def mega_prompt(self, prompt_pos, prompt_neg, prompt_seed, noise_seed, width, height, checkpoint_datas, tag_stack) -> tuple[MetContext, MetContext, MetContext, MetContext, MetFaceContext]:
+    def mega_prompt(
+            self, num_contexts, use_facedetailer, prompt_pos, prompt_neg, prompt_seed, noise_seed, width, height, checkpoint_datas, tag_stack
+        ) -> tuple[MetContext, MetContext, MetContext, MetContext, MetFaceContext]:
         # Unroll <tags> if present in the tag_stack.
         prompt_pos = unroll_tag_stack(prompt_pos, tag_stack)
         prompt_neg = unroll_tag_stack(prompt_neg, tag_stack)
@@ -55,19 +59,15 @@ class MegaPrompt:
         # NOTE: Currently not done for the negative prompt, I don't think it would be useful.
         prompt_pos = randomize_prompt(prompt_pos, prompt_seed)
 
-        # Extract contents of <face> tags to send on to the FaceDetailer.
-        _, prompt_face_pos = extract_tag_from_text(prompt_pos, FACE_TAG, remove_content=False)
-        _, prompt_face_neg = extract_tag_from_text(prompt_neg, FACE_TAG, remove_content=False)
-
         # Apply aspect ratio override.
         width, height, prompt_pos = override_width_height(prompt_pos, width, height)
 
-        # Tidy prompts.
-        prompt_face_pos = tidy_prompt(prompt_face_pos)
-        prompt_face_neg = tidy_prompt(prompt_face_neg)
-
         contexts = []
         for i in range(1, 5):
+            if i > num_contexts:
+                contexts.append(None)
+                continue
+
             ctx_pos = extract_context_tags(prompt_pos, str(i))
             ctx_neg = extract_context_tags(prompt_neg, str(i))
             # Extract which checkpoint to use, specified by <checkpoint:identifier>.
@@ -104,15 +104,18 @@ class MegaPrompt:
                 loras=lora_tags,
             ))
 
+        last_context = next(c for c in reversed(contexts) if c)
+        face_pos, face_neg = extract_face_prompts(last_context)
+
         face_context = MetFaceContext(
-            checkpoint=contexts[0].checkpoint,
+            checkpoint=last_context.checkpoint,
             face_iterations=1,
             face_noise_amount=0.32,
-            pos_prompt=prompt_face_pos,
-            neg_prompt=prompt_face_neg,
-            noise_seed=contexts[0].noise_seed+4,
-            loras=contexts[0].loras,
-        )
+            pos_prompt=face_pos,
+            neg_prompt=face_neg,
+            noise_seed=last_context.noise_seed+4,
+            loras=last_context.loras,
+        ) if use_facedetailer else None
         return (*contexts, face_context)
 
 def unroll_tag_stack(prompt: str, tag_stack: dict[str, str]) -> str:
@@ -215,6 +218,16 @@ def remove_all_tag_syntax(prompt: str) -> str:
 
     return prompt
 
+def extract_face_prompts(context: MetContext) -> tuple[str, str]:
+    # Extract contents of <face> tags to send on to the FaceDetailer.
+    _, pos = extract_tag_from_text(context.pos_prompt, FACE_TAG)
+    _, neg = extract_tag_from_text(context.neg_prompt, FACE_TAG)
+
+    # Tidy face prompts.
+    pos = remove_all_tag_syntax(tidy_prompt(pos))
+    neg = remove_all_tag_syntax(tidy_prompt(neg))
+    return pos, neg
+
 class MetContextBreak:
     @classmethod
     def INPUT_TYPES(cls):
@@ -248,6 +261,8 @@ class MetContextBreak:
     DESCRIPTION="""Break context into primitive data sockets."""
 
     def break_context(self, Context):
+        if not Context:
+            return (None,)
         return (
             Context.checkpoint.path,
             Context.checkpoint.name,
