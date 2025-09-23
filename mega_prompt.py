@@ -48,7 +48,7 @@ class MegaPrompt:
     DESCRIPTION="""Process the mega prompt into 4 consecutive rendering contexts."""
 
     def mega_prompt(
-            self, num_contexts, use_facedetailer, prompt_pos, prompt_neg, prompt_seed, noise_seed, width, height, checkpoint_datas, tag_stack
+            self, num_contexts, use_facedetailer, prompt_pos, prompt_neg, prompt_seed, noise_seed, width, height, checkpoint_datas={}, tag_stack={}
         ) -> tuple[MetContext, MetContext, MetContext, MetContext, MetFaceContext]:
         # Unroll <tags> if present in the tag_stack.
         prompt_pos = unroll_tag_stack(prompt_pos, tag_stack)
@@ -154,8 +154,12 @@ def unroll_tag_stack(prompt: str, tag_stack: dict[str, str]) -> str:
         return prompt.replace(f'<{tag}>', tag_stack[tag])
 
     tags_to_unroll = present_tags(prompt)
+    swaps = 0
     while tags_to_unroll:
+        swaps += 1
         for tag in tags_to_unroll:
+            swaps += 1
+            print(swaps)
             prompt = unroll_tag(prompt, tag)
         tags_to_unroll = present_tags(prompt)
 
