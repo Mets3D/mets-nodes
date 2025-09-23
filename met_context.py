@@ -57,8 +57,8 @@ class MetFaceContext:
     """Minimal configuration for FaceDetailer."""
     checkpoint: MetCheckpointPreset
 
-    face_iterations: int = 1
-    face_noise_amount: float = 0.32
+    face_iter: int = 1
+    face_noise: float = 0.32
 
     pos_prompt: str = "detailed face"
     neg_prompt: str = ""

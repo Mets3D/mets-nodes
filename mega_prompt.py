@@ -61,6 +61,11 @@ class MegaPrompt:
         # NOTE: Currently not done for the negative prompt, I don't think it would be useful.
         prompt_pos = randomize_prompt(prompt_pos, prompt_seed)
 
+        # Remove contents of tags which are marked for removal using exclamation mark syntax: <!tag>
+        # Useful when a prompt wants to signify that it's not compatible with something.
+        # Eg., to easily prompt a blink, mark descriptions of <eye>eyes</eye>, then use "blink <!eye>" in prompt.
+        prompt_pos = remove_excluded_tags(prompt_pos)
+
         # Apply aspect ratio override.
         width, height, prompt_pos = override_width_height(prompt_pos, width, height)
 
@@ -95,11 +100,6 @@ class MegaPrompt:
             # Move contents of <!> tags to beginning of prompt.
             ctx_pos = reorder_prompt(ctx_pos)
 
-            # Remove contents of tags which are marked for removal using exclamation mark syntax: <!tag>
-            # Useful when a prompt wants to signify that it's not compatible with something.
-            # Eg., to easily prompt a blink, mark descriptions of <eye>eyes</eye>, then use "blink <!eye>" in prompt.
-            ctx_pos = remove_excluded_tags(ctx_pos)
-
             ctx_pos = remove_all_tag_syntax(tidy_prompt(ctx_pos))
             ctx_neg = remove_all_tag_syntax(tidy_prompt(ctx_neg))
 
@@ -132,11 +132,12 @@ class MegaPrompt:
         last_context = next((c for c in reversed(contexts) if c), None)
         face_context = None
         if use_facedetailer and last_context:
-            face_pos, face_neg = extract_face_prompts(last_context)
+            face_pos = extract_face_prompts(prompt_pos)
+            face_neg = extract_face_prompts(prompt_neg)
             face_context = MetFaceContext(
                 checkpoint=last_context.checkpoint,
-                face_iterations=1,
-                face_noise_amount=0.32,
+                face_iter=1,
+                face_noise=0.32,
                 pos_prompt=face_pos,
                 neg_prompt=face_neg,
                 noise_seed=last_context.noise_seed+4,
@@ -144,7 +145,7 @@ class MegaPrompt:
             )
             for key, value in ctx_params.items():
                 if hasattr(face_context, key):
-                    val_type = type(getattr(obj, key))
+                    val_type = type(getattr(face_context, key))
                     value = val_type(value)
                     setattr(face_context, key, value)
 
@@ -255,15 +256,11 @@ def remove_all_tag_syntax(prompt: str) -> str:
 
     return prompt
 
-def extract_face_prompts(context: MetContext) -> tuple[str, str]:
+def extract_face_prompts(prompt: str) -> str:
     # Extract contents of <face> tags to send on to the FaceDetailer.
-    _, pos = extract_tag_from_text(context.pos_prompt, FACE_TAG)
-    _, neg = extract_tag_from_text(context.neg_prompt, FACE_TAG)
-
-    # Tidy face prompts.
-    pos = remove_all_tag_syntax(tidy_prompt(pos))
-    neg = remove_all_tag_syntax(tidy_prompt(neg))
-    return pos, neg
+    _, prompt = extract_tag_from_text(prompt, FACE_TAG)
+    prompt = remove_all_tag_syntax(tidy_prompt(prompt))
+    return prompt
 
 class ContextBreak:
     NAME = "Context Break"
@@ -377,8 +374,8 @@ class FaceContextBreak:
             FaceContext.checkpoint.sampler,
             FaceContext.checkpoint.scheduler,
 
-            FaceContext.face_noise_amount,
-            FaceContext.face_iterations,
+            FaceContext.face_noise,
+            FaceContext.face_iter,
         )
 
 class PrepareCheckpoint:
