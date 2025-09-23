@@ -4,8 +4,9 @@ from .regex_nodes import (
 )
 from .model_downloader import DownloadCivitaiModel
 from .mega_prompt import MegaPrompt, ContextBreak, FaceContextBreak, PrepareCheckpoint, TagStacker
+from .image_adjust import AdjustImageNode
 
-nodes = [RegexNode, ExtractTagFromString, AutoExtractTags, ChainReplace, StableRandomChoiceNode, PromptTidy, DownloadCivitaiModel, MegaPrompt, ContextBreak, FaceContextBreak, PrepareCheckpoint, TagStacker]
+nodes = [RegexNode, ExtractTagFromString, AutoExtractTags, ChainReplace, StableRandomChoiceNode, PromptTidy, DownloadCivitaiModel, MegaPrompt, ContextBreak, FaceContextBreak, PrepareCheckpoint, TagStacker, AdjustImageNode]
 
 NODE_CLASS_MAPPINGS = {node.__name__: node for node in nodes}
 

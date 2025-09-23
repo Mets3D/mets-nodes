@@ -1,4 +1,4 @@
-import re, os, random
+import re, os
 from .met_context import MetCheckpointPreset, MetContext, MetFaceContext
 import folder_paths
 import comfy.samplers
@@ -71,9 +71,11 @@ class MegaPrompt:
             ctx_pos, ctx_params = extract_context_tags(prompt_pos, str(i))
             ctx_neg, _ = extract_context_tags(prompt_neg, str(i))
 
-            checkpoint = checkpoint_datas.get(ctx_params.pop('checkpoint'), None)
+            checkpoint = checkpoint_datas.get(ctx_params.pop('checkpoint', None), None)
             if not checkpoint:
-                raise Exception(f"MegaPrompt error: A checkpoint is not specified for Context {i}.\nDo so by plugging in at least one Context Data, and then triggering it in the positive prompt using <checkpoint:name_of_checkpoint>.")
+                contexts.append(None)
+                continue
+                raise Exception(f"MegaPrompt error: A checkpoint is not specified for Context {i}.\nDo so by plugging in at least one Context Data, and then triggering it in the positive prompt using <context_{i}:checkpoint=CheckpointName>your prompt here</context_{i}>.")
 
             # Apply the checkpoint's associated +/- prompts..
             ctx_pos, ctx_neg = apply_checkpoint_prompt(ctx_pos, ctx_neg, checkpoint)
@@ -100,7 +102,7 @@ class MegaPrompt:
                 checkpoint=checkpoint,
                 # NOTE: It's important to offset the noise seed for subsequent samplers.
                 # Stacking results of different checkpoints with the same noise pattern has poor results for some reason.
-                noise_seed=noise_seed+i if noise_seed <= 0 else random.randint(1, 100000000),
+                noise_seed=noise_seed+i,
                 prompt_seed=prompt_seed,
                 width=width,
                 height=height,
@@ -108,6 +110,8 @@ class MegaPrompt:
                 neg_prompt=ctx_neg,
                 loras=lora_tags,
             )
+            if i == 1 and "noise" not in ctx_params:
+                ctx_params["noise"] = 1.0
             for obj in (context, checkpoint):
                 for key, value in ctx_params.items():
                     if hasattr(obj, key):
@@ -134,10 +138,10 @@ class MegaPrompt:
                 noise_seed=last_context.noise_seed+4,
                 loras=last_context.loras,
             )
-            for key, value_str in overrides.items():
+            for key, value in ctx_params.items():
                 if hasattr(face_context, key):
-                    val_type = type(getattr(face_context, key))
-                    value = val_type(value_str)
+                    val_type = type(getattr(obj, key))
+                    value = val_type(value)
                     setattr(face_context, key, value)
 
         return (*contexts, face_context)
@@ -279,6 +283,10 @@ class ContextBreak:
         'Height': 'INT',
         'Scale By': 'FLOAT',
         'Add Noise': 'FLOAT',
+
+        'Brightness': 'FLOAT',
+        'Contrast': 'FLOAT',
+        'Saturation': 'FLOAT',
     }.items()))
     FUNCTION = "break_context"
     CATEGORY = "MetsNodes"
@@ -304,7 +312,11 @@ class ContextBreak:
             Context.width,
             Context.height,
             Context.scale,
-            Context.add_noise,
+            Context.noise,
+
+            Context.brightness,
+            Context.contrast,
+            Context.saturation,
         )
 
 class FaceContextBreak:

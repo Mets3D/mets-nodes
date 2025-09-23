@@ -43,8 +43,12 @@ class MetContext:
     # Render settings.
     width: int = 1024
     height: int = 1024
+    noise: float = 0.5
     scale: float = 1.0
-    add_noise: float = 0.5
+
+    brightness: float = 1.0
+    contrast: float = 1.0
+    saturation: float = 1.0
 
     def copy(self):
         from copy import deepcopy
