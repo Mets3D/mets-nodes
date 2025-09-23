@@ -1,8 +1,6 @@
 import os
 from dataclasses import dataclass, field
 
-COMMON_POSITIVE = "highly detailed, great lighting, atmospheric, illustration, 4k, masterpiece, best quality, detailed background, beautiful composition, artistic, HDR, high dynamic range, "
-COMMON_NEGATIVE = "ugly, boring, empty, plain, colorless, gray, lowres, worst quality, low quality, bad quality, bad hands, sketch, jpeg artifacts, signature, watermark, text, old, oldest, censored, bad hands, patreon, flat eyes, blank stare, dead eyes, noisy eyes, complex eyes, overexposed sky, clipping, "
 
 @dataclass
 class MetCheckpointPreset:
@@ -14,8 +12,8 @@ class MetCheckpointPreset:
     cfg: float
     sampler: str
     scheduler: str = "normal"
-    model_pos_prompt: str = COMMON_POSITIVE
-    model_neg_prompt: str = COMMON_NEGATIVE
+    model_pos_prompt: str = ""
+    model_neg_prompt: str = ""
     clip_skip: int = -2
 
     @property

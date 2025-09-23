@@ -15,10 +15,13 @@ FORCE_LANDSCAPE = "<ratio:landscape>"
 FORCE_SQUARE = "<ratio:square>"
 CONTEXT_PREFIX = "context_"
 
-RE_LORA = re.compile(r"<lora.*?>")
+# NOTE: BE CAREFUL WITH REGEX!! Complex Regular Expressions on complex prompts can turn into what's known as a Runaway Regex, and require near-infinite calculation!
+# KEEP THESE SIMPLE, and then do simple string operations.
+RE_CONTEXT_TAGS = re.compile(rf"(?s)<{CONTEXT_PREFIX}.*?>.*?<\/{CONTEXT_PREFIX}.*?>")
 RE_TAG_NAMES = re.compile(r"<\/((?:\w|\s|!)+)>")
-RE_CONTEXT_TAGS = re.compile(rf"(<({CONTEXT_PREFIX}[^:>]+)(?::(.*))?>)((?:\s|.)*?)(<\/\2>)")
 RE_EXCLUDE = re.compile(r"<!((?:\w|\s)+)>")
+RE_LORA = re.compile(r"<lora.*?>")
+LAST_CONTEXTS: dict[str, MetContext] = {}
 
 class MegaPrompt:
     NAME = "Mega Prompt"
@@ -73,9 +76,11 @@ class MegaPrompt:
 
             checkpoint = checkpoint_datas.get(ctx_params.pop('checkpoint', None), None)
             if not checkpoint:
-                contexts.append(None)
-                continue
-                raise Exception(f"MegaPrompt error: A checkpoint is not specified for Context {i}.\nDo so by plugging in at least one Context Data, and then triggering it in the positive prompt using <context_{i}:checkpoint=CheckpointName>your prompt here</context_{i}>.")
+                if i == 0:
+                    raise Exception(f"MegaPrompt error: A checkpoint is not specified for Context {i}.\nDo so by plugging in at least one Context Data, and then triggering it in the positive prompt using <context_{i}:checkpoint=CheckpointName>your prompt here</context_{i}>.")
+                else:
+                    contexts.append(None)
+                    continue
 
             # Apply the checkpoint's associated +/- prompts..
             ctx_pos, ctx_neg = apply_checkpoint_prompt(ctx_pos, ctx_neg, checkpoint)
@@ -124,11 +129,10 @@ class MegaPrompt:
 
             contexts.append(context)
 
-        last_context = next(c for c in reversed(contexts) if c)
-        face_pos, face_neg = extract_face_prompts(last_context)
-
+        last_context = next((c for c in reversed(contexts) if c), None)
         face_context = None
-        if use_facedetailer:
+        if use_facedetailer and last_context:
+            face_pos, face_neg = extract_face_prompts(last_context)
             face_context = MetFaceContext(
                 checkpoint=last_context.checkpoint,
                 face_iterations=1,
@@ -154,12 +158,8 @@ def unroll_tag_stack(prompt: str, tag_stack: dict[str, str]) -> str:
         return prompt.replace(f'<{tag}>', tag_stack[tag])
 
     tags_to_unroll = present_tags(prompt)
-    swaps = 0
     while tags_to_unroll:
-        swaps += 1
         for tag in tags_to_unroll:
-            swaps += 1
-            print(swaps)
             prompt = unroll_tag(prompt, tag)
         tags_to_unroll = present_tags(prompt)
 
@@ -214,14 +214,20 @@ def reorder_prompt(prompt: str) -> str:
 
 def extract_context_tags(prompt: str, context_id: str) -> tuple[str, dict[str, str]]:
     props = {}
-    for tag_start, ctx_name, ctx_props, ctx_prompt, tag_end in RE_CONTEXT_TAGS.findall(prompt):
-        whole_thing = tag_start+ctx_prompt+tag_end
-        if ctx_name == CONTEXT_PREFIX + str(context_id):
-            prompt = prompt.replace(tag_start, "").replace(tag_end, "")
+    matches = RE_CONTEXT_TAGS.findall(prompt)
+    for match in matches:
+        tag_start = match.split("<")[1].split(">")[0]
+        tag_end = match.split("<")[-1].split(">")[-2]
+        match_name, ctx_props = tag_start.split(":")
+        context_name = CONTEXT_PREFIX + str(context_id)
+        if match_name == context_name:
+            prompt = prompt.replace(f"<{tag_start}>", "").replace(f"<{tag_end}>", "")
             if ctx_props:
+                # NOTE: The property values here are left as strings. 
+                # They are to be converted to the appropriate type outside of this function.
                 props = {k.strip(): v.strip() for k, v in (pair.split("=") for pair in ctx_props.split(","))}
         else:
-            prompt = prompt.replace(whole_thing, "")
+            prompt = prompt.replace(match, "")
 
     return prompt, props
 
