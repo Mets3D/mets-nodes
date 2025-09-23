@@ -134,6 +134,11 @@ class MegaPrompt:
         if use_facedetailer and last_context:
             face_pos = extract_face_prompts(prompt_pos)
             face_neg = extract_face_prompts(prompt_neg)
+            # Move contents of <neg> tags to negative prompt, 
+            # and remove exact matches of negative prompt words from the positive prompt.
+            # face_pos, face_neg = move_neg_tags(face_pos, face_neg)
+            face_pos = remove_all_tag_syntax(tidy_prompt(face_pos))
+            face_neg = remove_all_tag_syntax(tidy_prompt(face_neg))
             face_context = MetFaceContext(
                 checkpoint=last_context.checkpoint,
                 face_iter=1,
@@ -254,12 +259,11 @@ def remove_all_tag_syntax(prompt: str) -> str:
         # Remove the tags themselves, no matter what.
         prompt, content = extract_tag_from_text(prompt, tag, remove_content=False)
 
-    return prompt
+    return tidy_prompt(prompt)
 
 def extract_face_prompts(prompt: str) -> str:
     # Extract contents of <face> tags to send on to the FaceDetailer.
     _, prompt = extract_tag_from_text(prompt, FACE_TAG)
-    prompt = remove_all_tag_syntax(tidy_prompt(prompt))
     return prompt
 
 class ContextBreak:
