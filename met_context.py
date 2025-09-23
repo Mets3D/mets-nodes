@@ -23,6 +23,10 @@ class MetCheckpointPreset:
         return self.path.split(os.sep)[-1]
     civitai_version_name: str = ""
 
+    def copy(self):
+        from copy import deepcopy
+        return deepcopy(self)
+
 @dataclass
 class MetContext:
     """This class handles only primitive python data representing a complete rendering environment 
@@ -44,6 +48,10 @@ class MetContext:
     scale: float = 1
     add_noise: float = 0.5
 
+    def copy(self):
+        from copy import deepcopy
+        return deepcopy(self)
+
 @dataclass
 class MetFaceContext:
     """Minimal configuration for FaceDetailer."""
@@ -56,3 +64,7 @@ class MetFaceContext:
     neg_prompt: str = ""
     noise_seed: int = -1
     loras: list[str] = field(default_factory=list)
+
+    def copy(self):
+        from copy import deepcopy
+        return deepcopy(self)

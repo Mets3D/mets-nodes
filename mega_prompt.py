@@ -16,7 +16,7 @@ FORCE_LANDSCAPE = "<ratio:landscape>"
 FORCE_SQUARE = "<ratio:square>"
 CONTEXT_PREFIX = "context_"
 
-RE_CHECKPOINT = re.compile(r"<checkpoint:([^>]+)>")
+RE_CHECKPOINT = re.compile(r"<checkpoint:(.*?)(,(.*?))?>")
 RE_LORA = re.compile(r"<lora.*?>")
 RE_TAG_NAMES = re.compile(r"<\/((?:\w|\s|!)+)>")
 RE_CONTEXT_TAGS = re.compile(rf"<{CONTEXT_PREFIX}.*?>")
@@ -72,6 +72,8 @@ class MegaPrompt:
             ctx_neg = extract_context_tags(prompt_neg, str(i))
             # Extract which checkpoint to use, specified by <checkpoint:identifier>.
             ctx_pos, ctx_neg, checkpoint = apply_checkpoint_data(ctx_pos, ctx_neg, checkpoint_datas)
+            if not checkpoint:
+                raise Exception(f"MegaPrompt error: A checkpoint is not specified for Context {i}.\nDo so by plugging in at least one Context Data, and then triggering it in the positive prompt using <checkpoint:name_of_checkpoint>.")
 
             # Extract lora tags.
             lora_tags = extract_lora_tags(ctx_pos)
@@ -161,9 +163,17 @@ def override_width_height(prompt, width, height) -> tuple[int, int, str]:
 def apply_checkpoint_data(prompt_pos: str, prompt_neg: str, checkpoint_datas: dict[str, MetCheckpointPreset]) -> tuple[str, str, MetCheckpointPreset|None]:
     match = RE_CHECKPOINT.search(prompt_pos)
     checkpoint_name = match.group(1) if match else ""
-    checkpoint = checkpoint_datas.get(checkpoint_name)
+    checkpoint: MetCheckpointPreset|None = checkpoint_datas.get(checkpoint_name.strip()).copy()
 
-    if checkpoint:
+    if match and checkpoint:
+        overrides = match.group(3)
+        for override in overrides.split(","):
+            if ":" not in override:
+                continue
+            key, value = override.split(":")
+            key, value = key.strip(), value.strip()
+            if hasattr(checkpoint, key):
+                setattr(checkpoint, key, type(getattr(checkpoint, key))(value))
         if FORCE_NO_CP_PROMPT not in prompt_pos:
             # Put checkpoint's quality tags at START of +prompt. (maybe not important)
             prompt_pos = ",\n".join([checkpoint.model_pos_prompt, RE_CHECKPOINT.sub("", prompt_pos)])
@@ -314,6 +324,8 @@ class MetFaceContextBreak:
     DESCRIPTION="""Break context into primitive data sockets."""
 
     def break_context(self, FaceContext):
+        if not FaceContext:
+            return (None,)
         return (
             FaceContext.checkpoint.path,
             FaceContext.checkpoint.name,
