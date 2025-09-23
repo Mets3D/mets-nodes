@@ -79,7 +79,7 @@ class MegaPrompt:
             ctx_pos, ctx_params = extract_context_tags(prompt_pos, str(i))
             ctx_neg, _ = extract_context_tags(prompt_neg, str(i))
 
-            checkpoint = checkpoint_datas.get(ctx_params.pop('checkpoint', None), None)
+            checkpoint = checkpoint_datas.get(ctx_params.pop('checkpoint', "").lower(), None)
             if not checkpoint:
                 if i == 0:
                     raise Exception(f"MegaPrompt error: A checkpoint is not specified for Context {i}.\nDo so by plugging in at least one Context Data, and then triggering it in the positive prompt using <context_{i}:checkpoint=CheckpointName>your prompt here</context_{i}>.")
@@ -407,7 +407,7 @@ class PrepareCheckpoint:
 
     def prepare_checkpoint(self, **kwargs):
         checkpoint_datas = kwargs.get('checkpoint_datas', {})
-        checkpoint_datas.update({kwargs['identifier']: MetCheckpointPreset(
+        checkpoint_datas.update({kwargs['identifier'].lower(): MetCheckpointPreset(
             civitai_model_id=kwargs['civitai_id'],
             clip_skip=kwargs['clip_skip'],
             path=os.sep.join([kwargs['path'], kwargs['filename']+".safetensors"])[1:],
