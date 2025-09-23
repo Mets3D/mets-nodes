@@ -440,3 +440,27 @@ class TagStacker:
     def add_tag(self, tag_stack={}, tag="", content=""):
         tag_stack.update({tag: remove_comment_lines(content)})
         return (tag_stack,)
+
+class TagTweaker:
+    NAME = "Tag Tweaker"
+    DESCRIPTION = ("Search and replace among all value strings of the tag stack")
+    RETURN_NAMES, RETURN_TYPES = map(list, zip(*{"Tag Stack": 'TAG_STACK'}.items()))
+    FUNCTION = "tweak_tags"
+    CATEGORY = "MetsNodes/Tag Tools"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "optional": {
+                "tag_stack": ("TAG_STACK", {"tooltip": "Tag stack"}),
+                "find": ("STRING", {"multiline": True, "tooltip": "Text to replace in the tags."}),
+                "replace": ("STRING", {"multiline": True, "tooltip": "Text to replace with."}),
+            }
+        }
+
+    def tweak_tags(self, tag_stack={}, find="", replace=""):
+        for key, value in tag_stack.items():
+            if find in value:
+                tag_stack[key] = value.replace(find, replace)
+
+        return (tag_stack,)
