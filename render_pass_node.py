@@ -3,14 +3,14 @@ from pathlib import Path
 
 import comfy
 import folder_paths
-from nodes import CheckpointLoaderSimple, KSampler, CLIPTextEncode, VAEEncode, VAEDecode, EmptyImage, LatentBlend, EmptyLatentImage, ImageScaleBy
+from nodes import CheckpointLoaderSimple, KSampler, CLIPTextEncode, VAEEncode, VAEDecode, EmptyImage, LatentBlend, EmptyLatentImage, ImageScaleBy, NODE_CLASS_MAPPINGS
 
 from .met_context import MetCheckpointPreset
 from .mega_prompt import (
     unroll_tag_stack, move_neg_tags, override_width_height, apply_checkpoint_prompt, extract_lora_tags, reorder_prompt, 
-    extract_context_tags, remove_excluded_tags, remove_all_tag_syntax, extract_face_prompts
+    remove_excluded_tags, remove_all_tag_syntax, extract_face_prompts
 )
-from .regex_nodes import randomize_prompt, extract_tag_from_text, remove_comment_lines, tidy_prompt
+from .regex_nodes import randomize_prompt, tidy_prompt
 
 # TODO: 
 # - Rename Metxyz classes to have better names, eg. MetCheckpointPreset->CheckpointConfig, PrepareCheckpoint->ConfigureCheckpoint
@@ -59,7 +59,7 @@ class RenderPass:
         pass_index = data.get("pass_index", 0) + 1
         data['pass_index'] = pass_index
 
-        ckpt_config = next((cp for identifier, cp in checkpoint_datas.items() if cp.path==checkpoint_name), None)
+        ckpt_config: MetCheckpointPreset|None = next((cp for identifier, cp in checkpoint_datas.items() if cp.path==checkpoint_name), None)
         if not ckpt_config:
              raise Exception(f"Checkpoint config not found for: {checkpoint_name}\nYou need to provide it by plugging a Prepare Checkpoint node into a Prepare Render Pass Node, and then plugging that into this node.")
 
@@ -84,24 +84,32 @@ class RenderPass:
         if image == None:
             image = EmptyImage().generate(1024, 1024)[0]
 
+        prompt_pos, face_pos = extract_face_prompts(prompt_pos)
+        prompt_neg, face_neg = extract_face_prompts(prompt_neg)
+
+        if is_prompt_additive and pass_index != 1:
+            prev_pos, prev_neg = data.get("prompt_pos", ""), data.get("prompt_neg", "")
+            prev_face_pos, prev_face_neg = data.get("prompt_face_pos", ""), data.get("prompt_face_neg", "")
+            if prev_pos:
+                prompt_pos += ",\n"+prev_pos
+                face_pos += ",\n"+prev_face_pos
+            if prev_neg:
+                prompt_neg += ",\n"+prev_neg
+                face_neg += ",\n"+prev_face_neg
+
         # Store the prompt in its current state of processing to be sent on to subsequent render passes.
-        # NOTE: We want to do this before removing more or less anything from the prompts, 
+        # NOTE: We want to do this before removing anything from the prompts, 
+        # and before adding the checkpoint's quality prompt,
         # since each render pass will just remove whatever it wants to remove.
         # However, we want to do it AFTER the prompt has been unrolled and randomized, so subsequent render passes 
         # don't get totally unrelated prompts.
         data["prompt_pos"] = prompt_pos
         data["prompt_neg"] = prompt_neg
+        data["prompt_face_pos"] = prompt_pos
+        data["prompt_face_neg"] = prompt_neg
 
-        # Apply the checkpoint's associated +/- prompts..
+        # Apply the checkpoint's associated +/- prompts.
         prompt_pos, prompt_neg = apply_checkpoint_prompt(prompt_pos, prompt_neg, ckpt_config)
-
-        if is_prompt_additive and pass_index != 1:
-            previous_pos = data.get("prompt_pos", "")
-            if previous_pos:
-                prompt_pos += ",\n"+previous_pos
-            previous_neg = data.get("prompt_neg", "")
-            if previous_neg:
-                prompt_neg += ",\n"+previous_neg
 
         # Remove contents of tags which are marked for removal using exclamation mark syntax: <!tag>
         # Useful when a prompt wants to signify that it's not compatible with something.
@@ -128,10 +136,74 @@ class RenderPass:
         # Extract lora tags.
         fin_pos, lora_tags = extract_lora_tags(prompt_pos)
 
-        final_image = render(ckpt_config, fin_pos, prompt_neg, image, noise_seed, noise, pass_index=pass_index, lora_tags=lora_tags)
+        model, vae, clip, final_image = render(ckpt_config, fin_pos, prompt_neg, image, noise_seed, noise, pass_index=pass_index, lora_tags=lora_tags)
         data['last_image'] = final_image
+        data['last_model'] = model
+        data['last_vae'] = vae
+        data['last_clip'] = clip
+        data['last_checkpoint_config'] = ckpt_config
         return (data, final_image, prompt_pos, prompt_neg)
 
+class RenderPass_Face:
+    NAME = "Face Render Pass"
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "optional": {
+                "data": ("RENDER_PASS_DATA", {"tooltip": "Various data collected, to be used by a render pass."}),
+                "noise": ("FLOAT", {"tooltip": "Amount of noise to add to the image before starting sampling", "default": 0.32, "min": 0.01, "max": 1.0}),
+                "image": ("IMAGE", {"tooltip": "Image to improve faces on."}),
+                "prompt_pos": ("STRING", {"multiline": False, "tooltip": "Positive prompt for the faces."}),
+                "prompt_neg": ("STRING", {"multiline": False, "tooltip": "Negative prompt for the faces."}),
+            },
+        }
+
+    RETURN_NAMES = ("Data", "Image")
+    RETURN_TYPES = ("RENDER_PASS_DATA","IMAGE")
+    FUNCTION = "face_pass_execute"
+    CATEGORY = "MetsNodes"
+    DESCRIPTION="""Simplified wrapper for the Impact Pack's FaceDetailer node."""
+    OUTPUT_NODE = True
+
+    def face_pass_execute(self, data, noise, image, prompt_pos, prompt_neg):
+        try:
+            from impact.impact_pack import FaceDetailer
+        except ModuleNotFoundError:
+            raise Exception("FaceDetailer node must be installed (from Impact Pack).")
+        model = data.get('last_model', None)
+        vae = data.get('last_vae', None)
+        clip = data.get('last_clip', None)
+        if model==None or vae==None or clip==None:
+            raise Exception("No model data for Face Pass node.\nYou must plug in a Render Pass node's data output into this node's data input.")
+        ckpt_config: MetCheckpointPreset|None = data.get('last_checkpoint_config', None)
+        if not ckpt_config:
+            raise Exception("Checkpoint config not provided.\nYou must plug in a Render Pass node's data output into this node's data input.")
+        if 'UltralyticsDetectorProvider' not in NODE_CLASS_MAPPINGS:
+            raise Exception(f"UltralyticsDetectorProvider node must be installed (from Impact Subpack)")
+        DetectorProvider = NODE_CLASS_MAPPINGS['UltralyticsDetectorProvider']
+        bbox_detector, segm_detector = DetectorProvider().doit('bbox/face_yolov8m.pt')
+
+        seed = data.get("noise_seed", 0)+1
+        steps = ckpt_config.steps
+        cfg = ckpt_config.cfg
+        sampler_name = ckpt_config.sampler
+        scheduler = ckpt_config.scheduler
+
+        prompt_pos += ", "+data.get("prompt_face_pos", "")
+        prompt_neg += ", "+data.get("prompt_face_neg", "")
+
+        clip_encoder = CLIPTextEncode()
+        positive = clip_encoder.encode(clip, prompt_pos)[0]
+        negative = clip_encoder.encode(clip, prompt_neg)[0]
+
+        results = FaceDetailer().doit(
+            image, model, clip, vae, guide_size=512, guide_size_for=True, max_size=1024, seed=seed, steps=steps, cfg=cfg, sampler_name=sampler_name, scheduler=scheduler,
+             positive=positive, negative=negative, denoise=noise, feather=5, noise_mask=True, force_inpaint=True,
+             bbox_threshold=0.5, bbox_dilation=10, bbox_crop_factor=3.0,
+             sam_detection_hint='center-1', sam_dilation=0, sam_threshold=0.93, sam_bbox_expansion=0, sam_mask_hint_threshold=0.7,
+             sam_mask_hint_use_negative='False', drop_size=10, bbox_detector=bbox_detector, wildcard="", cycle=1,
+        )
+        return (data, results[0])
 
 def render(checkpoint_config: MetCheckpointPreset, prompt_pos, prompt_neg, start_image=None, noise_seed=0, noise_strength=1.0, pass_index=1, lora_tags: list[str]=[]):
     steps = checkpoint_config.steps
@@ -141,7 +213,7 @@ def render(checkpoint_config: MetCheckpointPreset, prompt_pos, prompt_neg, start
 
     model, clip, vae = CheckpointLoaderSimple().load_checkpoint(checkpoint_config.path)
     model, clip = load_loras(model, clip, "".join(lora_tags))
-    
+
     clip_encoder = CLIPTextEncode()
     pos_encoded = clip_encoder.encode(clip, prompt_pos)[0]
     neg_encoded = clip_encoder.encode(clip, prompt_neg)[0]
@@ -158,8 +230,9 @@ def render(checkpoint_config: MetCheckpointPreset, prompt_pos, prompt_neg, start
 
     out_latent = KSampler().sample(model, noise_seed, steps, cfg, sampler_name, scheduler, pos_encoded, neg_encoded, in_latent, noise_strength)[0]
 
-    return VAEDecode().decode(vae, out_latent)[0]
+    out_image = VAEDecode().decode(vae, out_latent)[0]
 
+    return model, vae, clip, out_image
 
 def load_loras(model, clip, text):
     """This function was copied from https://github.com/badjeff/comfyui_lora_tag_loader/blob/master/nodes.py"""
@@ -202,9 +275,9 @@ def load_loras(model, clip, text):
                 lora_name = lora_file
                 break
         if lora_name == None:
-            print(f"!!!Bypassed lora tag: { (type, name, wModel, wClip) } >> { lora_name }")
+            print(f"!!!Missing LoRA: { (name, wModel) } >> { lora_name }")
             continue
-        print(f"Detected lora tag: { (type, name, wModel, wClip) } >> { lora_name }")
+        print(f"Detected LoRA: { (name, wModel) } >> { lora_name }")
 
         lora_path = folder_paths.get_full_path("loras", lora_name)
         lora = comfy.utils.load_torch_file(lora_path, safe_load=True)

@@ -134,8 +134,8 @@ class MegaPrompt:
         last_context = next((c for c in reversed(contexts) if c), None)
         face_context = None
         if use_facedetailer and last_context:
-            face_pos = extract_face_prompts(prompt_pos)
-            face_neg = extract_face_prompts(prompt_neg)
+            _, face_pos = extract_face_prompts(prompt_pos)
+            _, face_neg = extract_face_prompts(prompt_neg)
             # Move contents of <neg> tags to negative prompt, 
             # and remove exact matches of negative prompt words from the positive prompt.
             # face_pos, face_neg = move_neg_tags(face_pos, face_neg)
@@ -183,7 +183,7 @@ def move_neg_tags(positive: str, negative: str) -> tuple[str, str]:
         if not neg_word:
             continue
         if neg_word in positive:
-            positive = re.sub(rf",?\s*{neg_word}\s*,?", ", ", positive)
+            positive = re.sub(rf"(,\s*|^){neg_word}", ", ", positive)
     return positive, negative
 
 def override_width_height(prompt, width, height) -> tuple[int, int, str]:
@@ -264,10 +264,10 @@ def remove_all_tag_syntax(prompt: str) -> str:
 
     return tidy_prompt(prompt)
 
-def extract_face_prompts(prompt: str) -> str:
+def extract_face_prompts(prompt: str) -> tuple[str, str]:
     # Extract contents of <face> tags to send on to the FaceDetailer.
-    _, prompt = extract_tag_from_text(prompt, FACE_TAG)
-    return prompt
+    cleaned_prompt, face_prompt = extract_tag_from_text(prompt, FACE_TAG)
+    return cleaned_prompt, face_prompt
 
 class ContextBreak:
     NAME = "Context Break"
