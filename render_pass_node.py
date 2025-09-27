@@ -1,0 +1,242 @@
+import re
+from pathlib import Path
+
+import comfy
+import folder_paths
+from nodes import CheckpointLoaderSimple, KSampler, CLIPTextEncode, VAEEncode, VAEDecode, EmptyImage, LatentBlend, EmptyLatentImage, ImageScaleBy
+
+from .met_context import MetCheckpointPreset
+from .mega_prompt import (
+    unroll_tag_stack, move_neg_tags, override_width_height, apply_checkpoint_prompt, extract_lora_tags, reorder_prompt, 
+    extract_context_tags, remove_excluded_tags, remove_all_tag_syntax, extract_face_prompts
+)
+from .regex_nodes import randomize_prompt, extract_tag_from_text, remove_comment_lines, tidy_prompt
+
+# TODO: 
+# - Rename Metxyz classes to have better names, eg. MetCheckpointPreset->CheckpointConfig, PrepareCheckpoint->ConfigureCheckpoint
+# - Rename their "identifier" input to "alias", although I really don't want to recreate all of them in my workflow (could just search and replace in the .json though...)
+# - Add prompt processing to RenderPass node
+
+# Remove a bunch of old technology, like ChainReplace, MegaPrompt, etc.
+
+RE_LORA_TAGS = re.compile(r"<lora:.*?>")
+
+class RenderPass:
+    NAME = "Render Pass"
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "optional": {
+                "data": ("RENDER_PASS_DATA", {"tooltip": "Various data collected, to be used by a render pass."}),
+                "checkpoint_name": (folder_paths.get_filename_list("checkpoints"),),
+                "noise": ("FLOAT", {"tooltip": "Amount of noise to add to the image before starting sampling", "default": 1.0, "min": 0.01, "max": 1.0}),
+                "image": ("IMAGE", {"tooltip": "Starting image. Even a black image is useful, to specify the render resolution, and to help generate a darker image if noise is less than 1.0"}),
+                "scale": ("FLOAT", {"tooltip": "Amount to scale input image by before adding noise and re-sampling", "default": 1.0, "min":0.01, "max": 10}),
+                "prompt_pos": ("STRING", {"multiline": False, "tooltip": "The base positive prompt."}),
+                "prompt_neg": ("STRING", {"multiline": False, "tooltip": "The base negative prompt."}),
+                "is_prompt_additive": ("BOOLEAN", {"tooltip": "Whether this prompt should be added onto any prompt information already contained in the data input. If not, it will replace the prompt instead.", "default": True}),
+            },
+        }
+
+    RETURN_NAMES = ("Data", "Image", "Prompt_Pos", "Prompt_Neg")
+    RETURN_TYPES = ("RENDER_PASS_DATA","IMAGE", "STRING", "STRING")
+    FUNCTION = "render_pass_execute"
+    CATEGORY = "MetsNodes"
+    DESCRIPTION="""Render an image with the data provided."""
+    OUTPUT_NODE = True
+
+    def render_pass_execute(self, data, checkpoint_name, noise, image=None, scale=1.0, prompt_pos="", prompt_neg="", is_prompt_additive=True):
+        # We want to make a copy of the passed data, otherwise Comfy might send us back 
+        # the dict that we modified in a previous run (eg. if it was a failed run)
+        data = data.copy()
+
+        tag_stack = data.get("tag_stack", {})
+        checkpoint_datas = data.get("checkpoint_datas", {})
+        prompt_seed = data.get("prompt_seed", 1)
+        noise_seed = data.get("noise_seed", 1)
+        # I think two samplers using the same seed usually gives bad results, so let's increment it for subsequent render passes.
+        data['seed'] = noise_seed+1
+        pass_index = data.get("pass_index", 0) + 1
+        data['pass_index'] = pass_index
+
+        ckpt_config = next((cp for identifier, cp in checkpoint_datas.items() if cp.path==checkpoint_name), None)
+        if not ckpt_config:
+             raise Exception(f"Checkpoint config not found for: {checkpoint_name}\nYou need to provide it by plugging a Prepare Checkpoint node into a Prepare Render Pass Node, and then plugging that into this node.")
+
+        prompt_pos = unroll_tag_stack(prompt_pos, tag_stack)
+        prompt_neg = unroll_tag_stack(prompt_neg, tag_stack)
+
+        # Randomize using {blue|red|green} syntax.
+        # NOTE: Currently not done for the negative prompt, I don't think it would be useful.
+        prompt_pos = randomize_prompt(prompt_pos, prompt_seed)
+
+        if image==None:
+            image = data.get('last_image', None)
+        if image==None:
+            image = EmptyImage().generate(1024, 1024)[0]
+
+        # Apply aspect ratio override.
+        real_width, real_height = image.shape[2], image.shape[1]
+        width, height, prompt_pos = override_width_height(prompt_pos, real_width, real_height)
+        if width != real_width:
+            image = image.permute(0, 2, 1, 3).contiguous()
+
+        if image == None:
+            image = EmptyImage().generate(1024, 1024)[0]
+
+        # Store the prompt in its current state of processing to be sent on to subsequent render passes.
+        # NOTE: We want to do this before removing more or less anything from the prompts, 
+        # since each render pass will just remove whatever it wants to remove.
+        # However, we want to do it AFTER the prompt has been unrolled and randomized, so subsequent render passes 
+        # don't get totally unrelated prompts.
+        data["prompt_pos"] = prompt_pos
+        data["prompt_neg"] = prompt_neg
+
+        # Apply the checkpoint's associated +/- prompts..
+        prompt_pos, prompt_neg = apply_checkpoint_prompt(prompt_pos, prompt_neg, ckpt_config)
+
+        if is_prompt_additive and pass_index != 1:
+            previous_pos = data.get("prompt_pos", "")
+            if previous_pos:
+                prompt_pos += ",\n"+previous_pos
+            previous_neg = data.get("prompt_neg", "")
+            if previous_neg:
+                prompt_neg += ",\n"+previous_neg
+
+        # Remove contents of tags which are marked for removal using exclamation mark syntax: <!tag>
+        # Useful when a prompt wants to signify that it's not compatible with something.
+        # Eg., to easily prompt a blink, mark descriptions of <eye>eyes</eye>, then use "blink <!eye>" in prompt.
+        # NOTE: This must come AFTER apply_checkpoint_prompt(), otherwise it will remove the <!modelprompt> 
+        # keyword before it has a chance to trigger.
+        prompt_pos = remove_excluded_tags(prompt_pos)
+
+        # Move contents of <neg> tags to negative prompt, 
+        # and remove exact matches of negative prompt words from the positive prompt.
+        prompt_pos, prompt_neg = move_neg_tags(prompt_pos, prompt_neg)
+
+        # Move contents of <!> tags to beginning of prompt.
+        prompt_pos = reorder_prompt(prompt_pos)
+
+        prompt_pos = remove_all_tag_syntax(tidy_prompt(prompt_pos))
+        prompt_neg = remove_all_tag_syntax(tidy_prompt(prompt_neg))
+
+        # Scale image, if requested.
+        if scale != 1.0:
+            upscale_method = 'area' if scale < 1.0 else 'lanczos'
+            image = ImageScaleBy().upscale(image, upscale_method, scale)[0]
+
+        # Extract lora tags.
+        fin_pos, lora_tags = extract_lora_tags(prompt_pos)
+
+        final_image = render(ckpt_config, fin_pos, prompt_neg, image, noise_seed, noise, pass_index=pass_index, lora_tags=lora_tags)
+        data['last_image'] = final_image
+        return (data, final_image, prompt_pos, prompt_neg)
+
+
+def render(checkpoint_config: MetCheckpointPreset, prompt_pos, prompt_neg, start_image=None, noise_seed=0, noise_strength=1.0, pass_index=1, lora_tags: list[str]=[]):
+    steps = checkpoint_config.steps
+    cfg = checkpoint_config.cfg
+    sampler_name = checkpoint_config.sampler
+    scheduler = checkpoint_config.scheduler
+
+    model, clip, vae = CheckpointLoaderSimple().load_checkpoint(checkpoint_config.path)
+    model, clip = load_loras(model, clip, "".join(lora_tags))
+    
+    clip_encoder = CLIPTextEncode()
+    pos_encoded = clip_encoder.encode(clip, prompt_pos)[0]
+    neg_encoded = clip_encoder.encode(clip, prompt_neg)[0]
+
+    if start_image == None and pass_index==1:
+        start_image = EmptyImage().generate(1024, 1024)[0]
+
+    in_latent = VAEEncode().encode(vae, start_image)[0]
+
+    if pass_index == 1:
+        empty_latent = EmptyLatentImage().generate(1024, 1024)[0]
+        if noise_strength < 1:
+            in_latent = LatentBlend().blend(empty_latent, in_latent, 1-noise_strength)[0]
+
+    out_latent = KSampler().sample(model, noise_seed, steps, cfg, sampler_name, scheduler, pos_encoded, neg_encoded, in_latent, noise_strength)[0]
+
+    return VAEDecode().decode(vae, out_latent)[0]
+
+
+def load_loras(model, clip, text):
+    """This function was copied from https://github.com/badjeff/comfyui_lora_tag_loader/blob/master/nodes.py"""
+    founds = re.findall(RE_LORA_TAGS, text)
+
+    if len(founds) < 1:
+        return model, clip
+
+    model_lora = model
+    clip_lora = clip
+
+    lora_files = folder_paths.get_filename_list("loras")
+    for f in founds:
+        tag = f[1:-1]
+        pak = tag.split(":")
+        type = pak[0]
+        if type != 'lora':
+            continue
+        name = None
+        if len(pak) > 1 and len(pak[1]) > 0:
+            name = pak[1]
+        else:
+            continue
+        wModel = wClip = 0
+        try:
+            if len(pak) > 2 and len(pak[2]) > 0:
+                wModel = float(pak[2])
+                wClip = wModel
+            if len(pak) > 3 and len(pak[3]) > 0:
+                wClip = float(pak[3])
+        except ValueError:
+            continue
+        if wModel == 0:
+            continue
+        if name == None:
+            continue
+        lora_name = None
+        for lora_file in lora_files:
+            if Path(lora_file).name.startswith(name) or lora_file.startswith(name):
+                lora_name = lora_file
+                break
+        if lora_name == None:
+            print(f"!!!Bypassed lora tag: { (type, name, wModel, wClip) } >> { lora_name }")
+            continue
+        print(f"Detected lora tag: { (type, name, wModel, wClip) } >> { lora_name }")
+
+        lora_path = folder_paths.get_full_path("loras", lora_name)
+        lora = comfy.utils.load_torch_file(lora_path, safe_load=True)
+
+        model_lora, clip_lora = comfy.sd.load_lora_for_models(model_lora, clip_lora, lora, wModel, wClip)
+
+    return model_lora, clip_lora
+
+class RenderPass_Prepare:
+    NAME = "Prepare Render Pass"
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "optional": {
+                "checkpoint_datas": ("CHECKPOINT_DATAS",),
+                "tag_stack": ("TAG_STACK",),
+                "noise_seed": ("INT", {"control_after_generate": True, "tooltip": "Image noise seed"}),
+                "prompt_seed": ("INT", {"control_after_generate": True, "tooltip": "Seed to use for prompt randomization when the prompt uses {red|green|blue} syntax"}),
+            },
+        }
+
+    RETURN_NAMES = ("Data", )
+    RETURN_TYPES = ("RENDER_PASS_DATA",)
+    FUNCTION = "render_pass_prepare"
+    CATEGORY = "MetsNodes"
+    DESCRIPTION="""Render an image with the data provided."""
+
+    def render_pass_prepare(self, checkpoint_datas, tag_stack, noise_seed, prompt_seed):
+        combined_data = {
+            'checkpoint_datas': checkpoint_datas,
+            'tag_stack': tag_stack,
+            'noise_seed': noise_seed,
+            'prompt_seed': prompt_seed
+        }
+        return (combined_data, )

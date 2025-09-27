@@ -19,6 +19,7 @@ class MetCheckpointPreset:
     @property
     def name(self) -> str:
         return self.path.split(os.sep)[-1]
+
     civitai_version_name: str = ""
 
     def copy(self):

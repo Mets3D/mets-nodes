@@ -61,11 +61,6 @@ class MegaPrompt:
         # NOTE: Currently not done for the negative prompt, I don't think it would be useful.
         prompt_pos = randomize_prompt(prompt_pos, prompt_seed)
 
-        # Remove contents of tags which are marked for removal using exclamation mark syntax: <!tag>
-        # Useful when a prompt wants to signify that it's not compatible with something.
-        # Eg., to easily prompt a blink, mark descriptions of <eye>eyes</eye>, then use "blink <!eye>" in prompt.
-        prompt_pos = remove_excluded_tags(prompt_pos)
-
         # Apply aspect ratio override.
         width, height, prompt_pos = override_width_height(prompt_pos, width, height)
 
@@ -90,8 +85,15 @@ class MegaPrompt:
             # Apply the checkpoint's associated +/- prompts..
             ctx_pos, ctx_neg = apply_checkpoint_prompt(ctx_pos, ctx_neg, checkpoint)
 
+            # Remove contents of tags which are marked for removal using exclamation mark syntax: <!tag>
+            # Useful when a prompt wants to signify that it's not compatible with something.
+            # Eg., to easily prompt a blink, mark descriptions of <eye>eyes</eye>, then use "blink <!eye>" in prompt.
+            # NOTE: This must come AFTER apply_checkpoint_prompt(), otherwise it will remove the <!modelprompt> 
+            # keyword before it has a chance to trigger.
+            prompt_pos = remove_excluded_tags(prompt_pos)
+
             # Extract lora tags.
-            lora_tags = extract_lora_tags(ctx_pos)
+            _cleaned_prompt, lora_tags = extract_lora_tags(ctx_pos)
 
             # Move contents of <neg> tags to negative prompt, 
             # and remove exact matches of negative prompt words from the positive prompt.
@@ -181,7 +183,7 @@ def move_neg_tags(positive: str, negative: str) -> tuple[str, str]:
         if not neg_word:
             continue
         if neg_word in positive:
-            positive = positive.replace(neg_word, "")
+            positive = re.sub(rf",?\s*{neg_word}\s*,?", ", ", positive)
     return positive, negative
 
 def override_width_height(prompt, width, height) -> tuple[int, int, str]:
@@ -196,7 +198,7 @@ def override_width_height(prompt, width, height) -> tuple[int, int, str]:
         return average, average, prompt.replace(FORCE_SQUARE, "")
     return width, height, prompt
 
-def apply_checkpoint_prompt(prompt_pos: str, prompt_neg: str, checkpoint:MetCheckpointPreset) -> tuple[str, str]:
+def apply_checkpoint_prompt(prompt_pos: str, prompt_neg: str, checkpoint: MetCheckpointPreset) -> tuple[str, str]:
     if FORCE_NO_CP_PROMPT not in prompt_pos:
         # Put checkpoint's quality tags at START of +prompt. (maybe not important)
         prompt_pos = ",\n".join([checkpoint.model_pos_prompt, prompt_pos])
@@ -211,8 +213,8 @@ def apply_checkpoint_prompt(prompt_pos: str, prompt_neg: str, checkpoint:MetChec
 
     return prompt_pos, prompt_neg
 
-def extract_lora_tags(prompt: str) -> list[str]:
-    return RE_LORA.findall(prompt)
+def extract_lora_tags(prompt: str) -> tuple[str, list[str]]:
+    return RE_LORA.sub("", prompt), RE_LORA.findall(prompt)
 
 def reorder_prompt(prompt: str) -> str:
     prompt_pos, tag_content = extract_tag_from_text(prompt, TOP_TAG, remove_content=True)
@@ -231,7 +233,8 @@ def extract_context_tags(prompt: str, context_id: str) -> tuple[str, dict[str, s
             if ctx_props:
                 # NOTE: The property values here are left as strings. 
                 # They are to be converted to the appropriate type outside of this function.
-                props = {k.strip(): v.strip() for k, v in (pair.split("=") for pair in ctx_props.split(","))}
+                props = [p.split("=") for p in ctx_props.split(",") if "=" in p]
+                props = {k.strip(): v.strip() for k, v in props}
         else:
             prompt = prompt.replace(match, "")
 
