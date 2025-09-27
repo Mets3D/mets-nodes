@@ -54,8 +54,6 @@ class RenderPass:
         checkpoint_datas = data.get("checkpoint_datas", {})
         prompt_seed = data.get("prompt_seed", 1)
         noise_seed = data.get("noise_seed", 1)
-        # I think two samplers using the same seed usually gives bad results, so let's increment it for subsequent render passes.
-        data['seed'] = noise_seed+1
         pass_index = data.get("pass_index", 0) + 1
         data['pass_index'] = pass_index
 
@@ -105,8 +103,8 @@ class RenderPass:
         # don't get totally unrelated prompts.
         data["prompt_pos"] = prompt_pos
         data["prompt_neg"] = prompt_neg
-        data["prompt_face_pos"] = prompt_pos
-        data["prompt_face_neg"] = prompt_neg
+        data["prompt_face_pos"] = face_pos
+        data["prompt_face_neg"] = face_neg
 
         # Apply the checkpoint's associated +/- prompts.
         prompt_pos, prompt_neg = apply_checkpoint_prompt(prompt_pos, prompt_neg, ckpt_config)
@@ -151,8 +149,9 @@ class RenderPass_Face:
         return {
             "optional": {
                 "data": ("RENDER_PASS_DATA", {"tooltip": "Various data collected, to be used by a render pass."}),
+                "image": ("IMAGE", {"tooltip": "Starting image. Not really necessary since the data will also pass along the image, but useful for when you want to bypass this node."}),
                 "noise": ("FLOAT", {"tooltip": "Amount of noise to add to the image before starting sampling", "default": 0.32, "min": 0.01, "max": 1.0}),
-                "image": ("IMAGE", {"tooltip": "Image to improve faces on."}),
+                "iterations": ("INT", {"tooltip": "Number of times to execute", "default": 1, "min": 1, "max": 5}),
                 "prompt_pos": ("STRING", {"multiline": False, "tooltip": "Positive prompt for the faces."}),
                 "prompt_neg": ("STRING", {"multiline": False, "tooltip": "Negative prompt for the faces."}),
             },
@@ -165,7 +164,7 @@ class RenderPass_Face:
     DESCRIPTION="""Simplified wrapper for the Impact Pack's FaceDetailer node."""
     OUTPUT_NODE = True
 
-    def face_pass_execute(self, data, noise, image, prompt_pos, prompt_neg):
+    def face_pass_execute(self, data, image, noise, iterations, prompt_pos, prompt_neg):
         try:
             from impact.impact_pack import FaceDetailer
         except ModuleNotFoundError:
@@ -173,8 +172,9 @@ class RenderPass_Face:
         model = data.get('last_model', None)
         vae = data.get('last_vae', None)
         clip = data.get('last_clip', None)
-        if model==None or vae==None or clip==None:
-            raise Exception("No model data for Face Pass node.\nYou must plug in a Render Pass node's data output into this node's data input.")
+        image = image if image!=None else data.get('last_image', None)
+        if model==None or vae==None or clip==None or image==None:
+            raise Exception("Missing data for Face Pass node.\nYou must plug in a Render Pass node's data output into this node's data input.")
         ckpt_config: MetCheckpointPreset|None = data.get('last_checkpoint_config', None)
         if not ckpt_config:
             raise Exception("Checkpoint config not provided.\nYou must plug in a Render Pass node's data output into this node's data input.")
@@ -183,7 +183,7 @@ class RenderPass_Face:
         DetectorProvider = NODE_CLASS_MAPPINGS['UltralyticsDetectorProvider']
         bbox_detector, segm_detector = DetectorProvider().doit('bbox/face_yolov8m.pt')
 
-        seed = data.get("noise_seed", 0)+1
+        seed = data.get("noise_seed", 0)+10
         steps = ckpt_config.steps
         cfg = ckpt_config.cfg
         sampler_name = ckpt_config.sampler
@@ -201,7 +201,7 @@ class RenderPass_Face:
              positive=positive, negative=negative, denoise=noise, feather=5, noise_mask=True, force_inpaint=True,
              bbox_threshold=0.5, bbox_dilation=10, bbox_crop_factor=3.0,
              sam_detection_hint='center-1', sam_dilation=0, sam_threshold=0.93, sam_bbox_expansion=0, sam_mask_hint_threshold=0.7,
-             sam_mask_hint_use_negative='False', drop_size=10, bbox_detector=bbox_detector, wildcard="", cycle=1,
+             sam_mask_hint_use_negative='False', drop_size=10, bbox_detector=bbox_detector, wildcard="", cycle=iterations,
         )
         return (data, results[0])
 
@@ -218,17 +218,18 @@ def render(checkpoint_config: MetCheckpointPreset, prompt_pos, prompt_neg, start
     pos_encoded = clip_encoder.encode(clip, prompt_pos)[0]
     neg_encoded = clip_encoder.encode(clip, prompt_neg)[0]
 
-    if start_image == None and pass_index==1:
+    if start_image == None:
+        if pass_index > 1:
+            raise Exception(f"No image for pass {pass_index}.")
         start_image = EmptyImage().generate(1024, 1024)[0]
 
-    in_latent = VAEEncode().encode(vae, start_image)[0]
+    if noise_strength == 1:
+        w, h = start_image.shape[2], start_image.shape[1]
+        in_latent = EmptyLatentImage().generate(w, h)[0]
+    else:
+        in_latent = VAEEncode().encode(vae, start_image)[0]
 
-    if pass_index == 1:
-        empty_latent = EmptyLatentImage().generate(1024, 1024)[0]
-        if noise_strength < 1:
-            in_latent = LatentBlend().blend(empty_latent, in_latent, 1-noise_strength)[0]
-
-    out_latent = KSampler().sample(model, noise_seed, steps, cfg, sampler_name, scheduler, pos_encoded, neg_encoded, in_latent, noise_strength)[0]
+    out_latent = KSampler().sample(model, noise_seed+pass_index, steps, cfg, sampler_name, scheduler, pos_encoded, neg_encoded, in_latent, noise_strength)[0]
 
     out_image = VAEDecode().decode(vae, out_latent)[0]
 
