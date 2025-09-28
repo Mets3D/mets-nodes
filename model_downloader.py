@@ -35,7 +35,7 @@ class DownloadCivitaiModel:
         # --- 1. Extract model ID ---
         m = re.search(r"/models/(\d+)(?:/|$|\?)", model_url)
         if not m:
-            raise ValueError("Invalid CivitAI model URL")
+            raise ValueError(f"Invalid CivitAI model URL: {model_url}")
         model_id = int(m.group(1))
 
         # --- 2. Check for modelVersionId in query string ---
@@ -85,7 +85,7 @@ class DownloadCivitaiModel:
                     selected_version = v
                     break
             if not selected_version:
-                raise RuntimeError(f"Specified version '{version}' not found for this model")
+                raise RuntimeError(f"Specified version '{version}' not found for {filename}")
         # 4c. Fallback to default (latest)
         if not selected_version:
             selected_version = versions[0]
@@ -106,7 +106,13 @@ class DownloadCivitaiModel:
         _, ext = os.path.splitext(orig_name)
 
         # --- 6. Build target path ---
-        models_base_dir = os.path.dirname(folder_paths.get_folder_paths("checkpoints")[0])
+        model_type = model_data.get("type")
+        if model_type == 'Checkpoint':
+            models_base_dir = os.path.dirname(folder_paths.get_folder_paths("checkpoints")[0])
+        elif model_type == 'LORA':
+            models_base_dir = folder_paths.get_folder_paths("loras")[0]
+        else:
+            raise Exception(f"Model type {model_type} is not currently supported.")
         target_dir = os.path.join(models_base_dir, subdir)
         os.makedirs(target_dir, exist_ok=True)
 

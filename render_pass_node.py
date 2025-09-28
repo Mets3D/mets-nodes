@@ -5,12 +5,13 @@ import comfy
 import folder_paths
 from nodes import CheckpointLoaderSimple, KSampler, CLIPTextEncode, VAEEncode, VAEDecode, EmptyImage, LatentBlend, EmptyLatentImage, ImageScaleBy, NODE_CLASS_MAPPINGS
 
-from .met_context import MetCheckpointPreset
+from .met_context import LoRA_Config, MetCheckpointPreset
 from .mega_prompt import (
     unroll_tag_stack, move_neg_tags, override_width_height, apply_checkpoint_prompt, extract_lora_tags, reorder_prompt, 
     remove_excluded_tags, remove_all_tag_syntax, extract_face_prompts
 )
 from .regex_nodes import randomize_prompt, tidy_prompt
+from .model_downloader import DownloadCivitaiModel
 
 # TODO: 
 # - Rename Metxyz classes to have better names, eg. MetCheckpointPreset->CheckpointConfig, PrepareCheckpoint->ConfigureCheckpoint
@@ -131,10 +132,12 @@ class RenderPass:
             upscale_method = 'area' if scale < 1.0 else 'lanczos'
             image = ImageScaleBy().upscale(image, upscale_method, scale)[0]
 
-        # Extract lora tags.
-        fin_pos, lora_tags = extract_lora_tags(prompt_pos)
+        api_token = data.get("civitai_api_key", "")
+        lora_data = data.get("lora_datas", {})
 
-        model, vae, clip, final_image = render(ckpt_config, fin_pos, prompt_neg, image, noise_seed, noise, pass_index=pass_index, lora_tags=lora_tags)
+        prompt_pos, lora_data = ensure_required_loras(prompt_pos, lora_data, api_token)
+
+        model, vae, clip, final_image = render(ckpt_config, prompt_pos, prompt_neg, image, noise_seed, noise, pass_index=pass_index, lora_data=lora_data)
         data['last_image'] = final_image
         data['last_model'] = model
         data['last_vae'] = vae
@@ -205,14 +208,14 @@ class RenderPass_Face:
         )
         return (data, results[0])
 
-def render(checkpoint_config: MetCheckpointPreset, prompt_pos, prompt_neg, start_image=None, noise_seed=0, noise_strength=1.0, pass_index=1, lora_tags: list[str]=[]):
+def render(checkpoint_config: MetCheckpointPreset, prompt_pos, prompt_neg, start_image=None, noise_seed=0, noise_strength=1.0, pass_index=1, lora_data: dict[str, float]={}):
     steps = checkpoint_config.steps
     cfg = checkpoint_config.cfg
     sampler_name = checkpoint_config.sampler
     scheduler = checkpoint_config.scheduler
 
     model, clip, vae = CheckpointLoaderSimple().load_checkpoint(checkpoint_config.path)
-    model, clip = load_loras(model, clip, "".join(lora_tags))
+    model, clip = apply_loras(model, clip, lora_data)
 
     clip_encoder = CLIPTextEncode()
     pos_encoded = clip_encoder.encode(clip, prompt_pos)[0]
@@ -235,17 +238,27 @@ def render(checkpoint_config: MetCheckpointPreset, prompt_pos, prompt_neg, start
 
     return model, vae, clip, out_image
 
-def load_loras(model, clip, text):
-    """This function was copied from https://github.com/badjeff/comfyui_lora_tag_loader/blob/master/nodes.py"""
-    founds = re.findall(RE_LORA_TAGS, text)
-
-    if len(founds) < 1:
+def apply_loras(model, clip, lora_data: dict[str, int]):
+    if not lora_data:
         return model, clip
+    for lora_name, weight in lora_data.items():
+        print(f"Applying LoRA: {(lora_name, weight)}")
 
-    model_lora = model
-    clip_lora = clip
+        lora_path = folder_paths.get_full_path("loras", lora_name)
+        lora = comfy.utils.load_torch_file(lora_path, safe_load=True)
 
+        model_lora, clip_lora = comfy.sd.load_lora_for_models(model, clip, lora, weight, weight)
+
+    return model_lora, clip_lora
+
+def ensure_required_loras(prompt: str, lora_configs: dict[str, LoRA_Config], api_token: str):
+    # Extract lora tags.
+    prompt_clean, lora_tags = extract_lora_tags(prompt)
+
+    founds = re.findall(RE_LORA_TAGS, prompt)
     lora_files = folder_paths.get_filename_list("loras")
+
+    lora_weights = {}
     for f in founds:
         tag = f[1:-1]
         pak = tag.split(":")
@@ -257,35 +270,31 @@ def load_loras(model, clip, text):
             name = pak[1]
         else:
             continue
-        wModel = wClip = 0
+        weight = _clip_weight = 0
         try:
             if len(pak) > 2 and len(pak[2]) > 0:
-                wModel = float(pak[2])
-                wClip = wModel
+                weight = float(pak[2])
+                _clip_weight = weight
             if len(pak) > 3 and len(pak[3]) > 0:
-                wClip = float(pak[3])
+                _clip_weight = float(pak[3])
         except ValueError:
             continue
-        if wModel == 0:
+        if weight == 0:
             continue
         if name == None:
             continue
-        lora_name = None
         for lora_file in lora_files:
             if Path(lora_file).name.startswith(name) or lora_file.startswith(name):
-                lora_name = lora_file
+                lora_weights[lora_file] = weight
                 break
-        if lora_name == None:
-            print(f"!!!Missing LoRA: { (name, wModel) } >> { lora_name }")
-            continue
-        print(f"Detected LoRA: { (name, wModel) } >> { lora_name }")
+        else:
+            lora_config = lora_configs.get(name.lower())
+            if not lora_config:
+                raise Exception(f"Missing LoRA: {name}\nEither remove it from the prompt, or download it manually, or use a Prepare Lora node to provide information about where to download the LoRA, so it can be automatically downloaded if it is missing.")
+            DownloadCivitaiModel().download_model(api_token, lora_config.civitai_url, lora_config.subdir, lora_config.name_noext, lora_config.version)
 
-        lora_path = folder_paths.get_full_path("loras", lora_name)
-        lora = comfy.utils.load_torch_file(lora_path, safe_load=True)
+    return prompt_clean, lora_weights
 
-        model_lora, clip_lora = comfy.sd.load_lora_for_models(model_lora, clip_lora, lora, wModel, wClip)
-
-    return model_lora, clip_lora
 
 class RenderPass_Prepare:
     NAME = "Prepare Render Pass"
@@ -294,6 +303,8 @@ class RenderPass_Prepare:
         return {
             "optional": {
                 "checkpoint_datas": ("CHECKPOINT_DATAS",),
+                "lora_datas": ("LORA_DATA",),
+                "civitai_api_key": ("STRING",),
                 "tag_stack": ("TAG_STACK",),
                 "noise_seed": ("INT", {"control_after_generate": True, "tooltip": "Image noise seed"}),
                 "prompt_seed": ("INT", {"control_after_generate": True, "tooltip": "Seed to use for prompt randomization when the prompt uses {red|green|blue} syntax"}),
@@ -306,9 +317,11 @@ class RenderPass_Prepare:
     CATEGORY = "MetsNodes"
     DESCRIPTION="""Render an image with the data provided."""
 
-    def render_pass_prepare(self, checkpoint_datas, tag_stack, noise_seed, prompt_seed):
+    def render_pass_prepare(self, checkpoint_datas={}, lora_datas={}, civitai_api_key="", tag_stack={}, noise_seed=0, prompt_seed=0):
         combined_data = {
             'checkpoint_datas': checkpoint_datas,
+            'lora_datas': lora_datas,
+            'civitai_api_key': civitai_api_key,
             'tag_stack': tag_stack,
             'noise_seed': noise_seed,
             'prompt_seed': prompt_seed

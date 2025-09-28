@@ -27,6 +27,28 @@ class MetCheckpointPreset:
         return deepcopy(self)
 
 @dataclass
+class LoRA_Config:
+    civitai_model_id: int
+    version: str
+    path: str
+
+    @property
+    def subdir(self) -> str:
+        return self.path.rsplit(os.sep, 1)[0]
+
+    @property
+    def name(self) -> str:
+        return self.path.split(os.sep)[-1]
+    
+    @property
+    def name_noext(self) -> str:
+        return self.name.split(".")[0]
+
+    @property
+    def civitai_url(self) -> str:
+        return f"https://civitai.com/models/{self.civitai_model_id}"
+
+@dataclass
 class MetContext:
     """This class handles only primitive python data representing a complete rendering environment 
     for a single AI image rendering pass, to be used in ComfyUI."""

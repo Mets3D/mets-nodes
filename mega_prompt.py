@@ -1,5 +1,5 @@
 import re, os
-from .met_context import MetCheckpointPreset, MetContext, MetFaceContext
+from .met_context import MetCheckpointPreset, MetContext, MetFaceContext, LoRA_Config
 import folder_paths
 import comfy.samplers
 # NOTE: Requires Impact Pack, sadly.
@@ -387,7 +387,7 @@ class FaceContextBreak:
 
 class PrepareCheckpoint:
     NAME = "Prepare Checkpoint"
-    DESCRIPTION = ("A simple string search and replace operation that is designed to nicely chain together. Can be used to build complex randomized prompts.")
+    DESCRIPTION = ("Stack information about checkpoints, to later easily switch between checkpoints in a Render Pass node.")
     RETURN_NAMES, RETURN_TYPES = map(list, zip(*{"Checkpoint Datas": 'CHECKPOINT_DATAS'}.items()))
     FUNCTION = "prepare_checkpoint"
     CATEGORY = "MetsNodes"
@@ -426,6 +426,35 @@ class PrepareCheckpoint:
             model_neg_prompt=kwargs['prompt_neg'],
         )})
         return (checkpoint_datas,)
+
+class PrepareLoRA:
+    NAME = "Prepare LoRA"
+    DESCRIPTION = ("Stack information about LoRAs, so they can later easily be downloaded and used with a Render Pass node.")
+    RETURN_NAMES, RETURN_TYPES = map(list, zip(*{"LoRA Data": 'LORA_DATA'}.items()))
+    FUNCTION = "prepare_lora"
+    CATEGORY = "MetsNodes"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "optional": {
+                "lora_data": ("LORA_DATA", {"tooltip": "Accumulated LoRA data"}),
+                "civitai_id": ("INT", {"tooltip": f"CivitAI model ID. Can be found in the model's page URL: civitai.com/models/<model id>", "min": 0, "max": 100000000}),
+                "version_name": ("STRING", {"tooltip": f"CivitAI model version name. If not specified, we assume the left-most version shown in the horizontal list on the model's page", "default":""}),
+                "path": ("STRING", {"tooltip": "Filepath relative to checkpoints folder, excluding filename"}),
+                "filename": ("STRING", {"tooltip": "Filename of checkpoint file (without extension)"}),
+                "triggers": ("STRING", {"multiline": True, "tooltip": "You can take note of the trigger words here. This is not actually used anywhere."}),
+            },
+        }
+
+    def prepare_lora(self, **kwargs):
+        lora_data = kwargs.get('lora_data', {})
+        lora_data.update({kwargs['filename'].lower(): LoRA_Config(
+            civitai_model_id=kwargs['civitai_id'],
+            version=kwargs['version_name'],
+            path=os.sep.join([kwargs['path'], kwargs['filename']+".safetensors"]),
+        )})
+        return (lora_data,)
 
 class TagStacker:
     NAME = "Tag Stacker"
