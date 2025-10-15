@@ -194,6 +194,8 @@ class RenderPass_Face:
 
         prompt_pos += ", "+data.get("prompt_face_pos", "")
         prompt_neg += ", "+data.get("prompt_face_neg", "")
+        prompt_pos = remove_all_tag_syntax(tidy_prompt(prompt_pos))
+        prompt_neg = remove_all_tag_syntax(tidy_prompt(prompt_neg))
 
         clip_encoder = CLIPTextEncode()
         positive = clip_encoder.encode(clip, prompt_pos)[0]
@@ -241,13 +243,13 @@ def render(checkpoint_config: MetCheckpointPreset, prompt_pos, prompt_neg, start
 def apply_loras(model, clip, lora_data: dict[str, int]):
     if not lora_data:
         return model, clip
+    model_lora, clip_lora = None, None
     for lora_name, weight in lora_data.items():
         print(f"Applying LoRA: {(lora_name, weight)}")
-
         lora_path = folder_paths.get_full_path("loras", lora_name)
         lora = comfy.utils.load_torch_file(lora_path, safe_load=True)
 
-        model_lora, clip_lora = comfy.sd.load_lora_for_models(model, clip, lora, weight, weight)
+        model_lora, clip_lora = comfy.sd.load_lora_for_models(model_lora or model, clip_lora or clip, lora, weight, weight)
 
     return model_lora, clip_lora
 
@@ -259,6 +261,7 @@ def ensure_required_loras(prompt: str, lora_configs: dict[str, LoRA_Config], api
     lora_files = folder_paths.get_filename_list("loras")
 
     lora_weights = {}
+    any_downloaded = False
     for f in founds:
         tag = f[1:-1]
         pak = tag.split(":")
@@ -292,6 +295,10 @@ def ensure_required_loras(prompt: str, lora_configs: dict[str, LoRA_Config], api
             if not lora_config:
                 raise Exception(f"Missing LoRA: {name}\nEither remove it from the prompt, or download it manually, or use a Prepare Lora node to provide information about where to download the LoRA, so it can be automatically downloaded if it is missing.")
             DownloadCivitaiModel().download_model(api_token, lora_config.civitai_url, lora_config.subdir, lora_config.name_noext, lora_config.version)
+            any_downloaded = True
+    if any_downloaded:
+        # Run this function again, now that everything is downloaded.
+        return ensure_required_loras(prompt, lora_configs, api_token)
 
     return prompt_clean, lora_weights
 
