@@ -183,7 +183,7 @@ def move_neg_tags(positive: str, negative: str) -> tuple[str, str]:
         if not neg_word:
             continue
         if neg_word in positive:
-            positive = re.sub(rf"(,\s*|^){neg_word}", ", ", positive)
+            positive = re.sub(rf"(,\s*|^)\(?{neg_word}(:?.*\))?", ", ", positive)
     return positive, negative
 
 def override_width_height(prompt, width, height) -> tuple[int, int, str]:
