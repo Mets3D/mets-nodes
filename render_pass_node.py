@@ -160,8 +160,8 @@ class RenderPass_Face:
             },
         }
 
-    RETURN_NAMES = ("Data", "Image")
-    RETURN_TYPES = ("RENDER_PASS_DATA","IMAGE")
+    RETURN_NAMES = ("Data", "Image", "Prompt_Pos", "Prompt_Neg")
+    RETURN_TYPES = ("RENDER_PASS_DATA","IMAGE", "STRING", "STRING")
     FUNCTION = "face_pass_execute"
     CATEGORY = "MetsNodes"
     DESCRIPTION="""Simplified wrapper for the Impact Pack's FaceDetailer node."""
@@ -208,7 +208,7 @@ class RenderPass_Face:
              sam_detection_hint='center-1', sam_dilation=0, sam_threshold=0.93, sam_bbox_expansion=0, sam_mask_hint_threshold=0.7,
              sam_mask_hint_use_negative='False', drop_size=10, bbox_detector=bbox_detector, wildcard="", cycle=iterations,
         )
-        return (data, results[0])
+        return (data, results[0], prompt_pos, prompt_neg)
 
 def render(checkpoint_config: MetCheckpointPreset, prompt_pos, prompt_neg, start_image=None, noise_seed=0, noise_strength=1.0, pass_index=1, lora_data: dict[str, float]={}):
     steps = checkpoint_config.steps
