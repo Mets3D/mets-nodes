@@ -474,8 +474,54 @@ class TagStacker:
         }
 
     def add_tag(self, tag_stack={}, tag="", content=""):
-        tag_stack.update({tag: remove_comment_lines(content)})
+        content = remove_comment_lines(content)
+        test_brackets(content, tag=tag)
+        tag_stack.update({tag: content})
         return (tag_stack,)
+
+
+def test_brackets(prompt: str, tag="") -> bool:
+    """
+    Verifies that all curly braces in the string are properly matched and ordered.
+    Prints context with the problematic bracket in red, then raises Exception if an issue is found.
+    """
+    stack = []
+    context_window = 20  # characters around the bracket to show
+
+    RED = "\033[1m\033[31m"
+    RESET = "\033[0m"
+
+    for i, ch in enumerate(prompt):
+        if ch == '{':
+            stack.append(i)
+        elif ch == '}':
+            if not stack:
+                # unmatched closing brace
+                start = max(0, i - context_window)
+                end = min(len(prompt), i + context_window + 1)
+                context = (
+                    prompt[start:i] + RED + prompt[i] + RESET + prompt[i + 1:end]
+                )
+                print(f"Tag Stacker ({tag}): Unmatched closing '}}':\n...{context}...")
+                raise Exception(f'Unmatched closing "}}" in tag: "{tag}"')
+            stack.pop()
+
+    if stack:
+        # unmatched opening brace(s) remaining
+        first_unmatched_index = stack[0]
+        start = max(0, first_unmatched_index - context_window)
+        end = min(len(prompt), first_unmatched_index + context_window + 1)
+        context = (
+            prompt[start:first_unmatched_index]
+            + RED
+            + prompt[first_unmatched_index]
+            + RESET
+            + prompt[first_unmatched_index + 1:end]
+        )
+        print(f"Tag Stacker ({tag}): Unmatched opening '{{':\n...{context}...")
+        raise Exception(f'Unmatched opening "{{" in tag "{tag}"')
+
+    return True
 
 class TagTweaker:
     NAME = "Tag Tweaker"
