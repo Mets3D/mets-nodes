@@ -1,9 +1,11 @@
-import re
+import re, json, hashlib
 from pathlib import Path
 
 from .dataclasses import LoRAConfig, CheckpointConfig
 from .nodes_prompt_tags import randomize_prompt, tidy_prompt, extract_tag_from_text
 from .nodes_downloader import DownloadCivitaiModel
+import time
+from collections import OrderedDict
 
 import comfy
 import folder_paths
@@ -31,7 +33,7 @@ RE_TAG_NAMES = re.compile(r"<\/((?:\w|\s|!)+)>")
 RE_EXCLUDE = re.compile(r"<!((?:\w|\s)+)>")
 RE_LORA = re.compile(r"<lora.*?>")
 
-PREV_MODEL = None
+MODEL_CACHE = OrderedDict() # filepath : loaded model, max 5 to avoid unnecessary re-loading but not overwhelm memory.
 
 # TODO: 
 # - Rename Metxyz classes to have better names, eg. CheckpointConfig->CheckpointConfig, PrepareCheckpoint->ConfigureCheckpoint
@@ -256,9 +258,11 @@ def override_width_height(prompt, image: Tensor) -> tuple[str, Tensor]:
     short = min(width, height)
     long = max(width, height)
     prompt = tidy_prompt(prompt)
-    if FORCE_PORTRAIT in prompt:
+    if short==long:
+        return prompt, image
+    if FORCE_PORTRAIT in prompt and width==long:
         return prompt.replace(FORCE_PORTRAIT, ""), image.permute(0, 2, 1, 3).contiguous()
-    elif FORCE_LANDSCAPE in prompt:
+    elif FORCE_LANDSCAPE in prompt and width==short:
         return prompt.replace(FORCE_LANDSCAPE, ""), image.permute(0, 2, 1, 3).contiguous()
     elif FORCE_SQUARE in prompt:
         average = int(long+short/2)
@@ -322,16 +326,22 @@ def render(checkpoint_config: CheckpointConfig, prompt_pos, prompt_neg, start_im
     sampler_name = checkpoint_config.sampler
     scheduler = checkpoint_config.scheduler
 
-    global PREV_MODEL
-    if PREV_MODEL and PREV_MODEL[0]==lora_data and PREV_MODEL[1]==checkpoint_config.path:
+    global MODEL_CACHE
+    start = time.time()
+    if checkpoint_config.path in MODEL_CACHE:
         # Optimization: If the checkpoint and LoRAs are the same as in 
         # previous prompt, don't load the models again.
         # NOTE: Not sure if this can cause the model to be stuck in memory for ever!
-        model, clip, vae = PREV_MODEL[2:]
+        model, clip, vae = MODEL_CACHE.get(checkpoint_config.path)
     else:
         model, clip, vae = CheckpointLoaderSimple().load_checkpoint(checkpoint_config.path)
-        model, clip = apply_loras(model, clip, lora_data)
-        PREV_MODEL = lora_data, checkpoint_config.path, model, clip, vae
+        MODEL_CACHE[checkpoint_config.path] = model, clip, vae
+        if len(MODEL_CACHE) > 5:
+            MODEL_CACHE.popitem(last=False)
+        print("Model load: ", time.time()-start)
+        start = time.time()
+    model, clip = apply_loras(model, clip, lora_data)
+    print("LoRA load: ", time.time()-start)
 
     clip_encoder = CLIPTextEncode()
     pos_encoded = clip_encoder.encode(clip, prompt_pos)[0]
@@ -353,6 +363,11 @@ def render(checkpoint_config: CheckpointConfig, prompt_pos, prompt_neg, start_im
     out_image = VAEDecode().decode(vae, out_latent)[0]
 
     return model, vae, clip, out_image
+
+def hash_from_dict(d: dict) -> str:
+    # Convert dict to a canonical JSON string (sorted keys ensure determinism)
+    s = json.dumps(d, sort_keys=True, separators=(',', ':'))
+    return hashlib.sha256(s.encode()).hexdigest()
 
 def apply_loras(model, clip, lora_data: dict[str, int]):
     if not lora_data:
