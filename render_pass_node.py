@@ -74,14 +74,26 @@ class RenderPass:
         if image==None:
             image = EmptyImage().generate(1024, 1024)[0]
 
-        # Apply aspect ratio override.
-        real_width, real_height = image.shape[2], image.shape[1]
-        width, height, prompt_pos = override_width_height(prompt_pos, real_width, real_height)
-        if width != real_width:
-            image = image.permute(0, 2, 1, 3).contiguous()
+        # Apply aspect ratio override. (<ratio:portrait/landscape/square>)
+        # This feature may discard or rotate the image, and is meant to be used with a blank input image.
+        ret = override_width_height(prompt_pos, image)
+        print("RETURN:")
+        print(ret)
+        print("END")
+        prompt_pos, image = override_width_height(prompt_pos, image)
 
         if image == None:
             image = EmptyImage().generate(1024, 1024)[0]
+
+        # Apply the checkpoint's associated +/- prompts.
+        prompt_pos, prompt_neg = apply_checkpoint_prompt(prompt_pos, prompt_neg, ckpt_config)
+
+        # Remove contents of tags which are marked for removal using exclamation mark syntax: <!tag>
+        # Useful when a prompt wants to signify that it's not compatible with something.
+        # Eg., to easily prompt a blink, mark descriptions of <eye>eyes</eye>, then use "blink <!eye>" in prompt.
+        # NOTE: This must come AFTER apply_checkpoint_prompt(), otherwise it will remove the <!modelprompt> 
+        # keyword before it has a chance to trigger.
+        prompt_pos = remove_excluded_tags(prompt_pos)
 
         prompt_pos, face_pos = extract_face_prompts(prompt_pos)
         prompt_neg, face_neg = extract_face_prompts(prompt_neg)
@@ -97,25 +109,10 @@ class RenderPass:
                 face_neg += ",\n"+prev_face_neg
 
         # Store the prompt in its current state of processing to be sent on to subsequent render passes.
-        # NOTE: We want to do this before removing anything from the prompts, 
-        # and before adding the checkpoint's quality prompt,
-        # since each render pass will just remove whatever it wants to remove.
-        # However, we want to do it AFTER the prompt has been unrolled and randomized, so subsequent render passes 
-        # don't get totally unrelated prompts.
         data["prompt_pos"] = prompt_pos
         data["prompt_neg"] = prompt_neg
         data["prompt_face_pos"] = face_pos
         data["prompt_face_neg"] = face_neg
-
-        # Apply the checkpoint's associated +/- prompts.
-        prompt_pos, prompt_neg = apply_checkpoint_prompt(prompt_pos, prompt_neg, ckpt_config)
-
-        # Remove contents of tags which are marked for removal using exclamation mark syntax: <!tag>
-        # Useful when a prompt wants to signify that it's not compatible with something.
-        # Eg., to easily prompt a blink, mark descriptions of <eye>eyes</eye>, then use "blink <!eye>" in prompt.
-        # NOTE: This must come AFTER apply_checkpoint_prompt(), otherwise it will remove the <!modelprompt> 
-        # keyword before it has a chance to trigger.
-        prompt_pos = remove_excluded_tags(prompt_pos)
 
         # Move contents of <neg> tags to negative prompt, 
         # and remove exact matches of negative prompt words from the positive prompt.

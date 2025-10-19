@@ -1,10 +1,12 @@
 import re, os
-from .met_context import MetCheckpointPreset, MetContext, MetFaceContext, LoRA_Config
+from .met_context import MetCheckpointPreset, MetContext, LoRA_Config
 import folder_paths
 import comfy.samplers
 # NOTE: Requires Impact Pack, sadly.
 import impact.core as core
-from .regex_nodes import randomize_prompt, extract_tag_from_text, remove_comment_lines, tidy_prompt
+from .regex_nodes import extract_tag_from_text, remove_comment_lines, tidy_prompt
+from nodes import EmptyImage
+from torch import Tensor
 
 NEG_TAG = "neg"
 FACE_TAG = "face"
@@ -22,141 +24,6 @@ RE_TAG_NAMES = re.compile(r"<\/((?:\w|\s|!)+)>")
 RE_EXCLUDE = re.compile(r"<!((?:\w|\s)+)>")
 RE_LORA = re.compile(r"<lora.*?>")
 LAST_CONTEXTS: dict[str, MetContext] = {}
-
-class MegaPrompt:
-    NAME = "Mega Prompt"
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "num_contexts": ("INT", {"tooltip": "How many contexts should be used.", "min": 1, "max": 4, "default": 1}),
-                "use_facedetailer": ("BOOLEAN", {"tooltip": "Whether facedetailer should be used or not."}),
-                "prompt_pos": ("STRING", {"multiline": True, "tooltip": "The base positive prompt."}),
-                "prompt_neg": ("STRING", {"multiline": True, "tooltip": "The base negative prompt."}),
-                "prompt_seed": ("INT", {"control_after_generate": True, "tooltip": "Prompt randomization seed."}),
-                "noise_seed": ("INT", {"control_after_generate": True, "tooltip": "Noise seed."}),
-                "width": ("INT", {"tooltip": "Image width.", "default": 1024, "min": 0, "max": 2**16}),
-                "height": ("INT", {"tooltip": "Image height.", "default": 1024, "min": 0, "max": 2**16}),
-            },
-            "optional": {
-                "checkpoint_datas": ("CHECKPOINT_DATAS",),
-                "tag_stack": ("TAG_STACK",),
-            },
-        }
-
-    RETURN_NAMES = ("Context 1", "Context 2", "Context 3", "Context 4", "FaceDetailer Context")
-    RETURN_TYPES = ("METCONTEXT","METCONTEXT","METCONTEXT","METCONTEXT","METFACECONTEXT")
-    FUNCTION = "mega_prompt"
-    CATEGORY = "MetsNodes"
-    DESCRIPTION="""Process the mega prompt into 4 consecutive rendering contexts."""
-
-    def mega_prompt(
-            self, num_contexts, use_facedetailer, prompt_pos, prompt_neg, prompt_seed, noise_seed, width, height, checkpoint_datas={}, tag_stack={}
-        ) -> tuple[MetContext, MetContext, MetContext, MetContext, MetFaceContext]:
-        # Unroll <tags> if present in the tag_stack.
-        prompt_pos = unroll_tag_stack(prompt_pos, tag_stack)
-        prompt_neg = unroll_tag_stack(prompt_neg, tag_stack)
-
-        # Randomize using {blue|red|green} syntax.
-        # NOTE: Currently not done for the negative prompt, I don't think it would be useful.
-        prompt_pos = randomize_prompt(prompt_pos, prompt_seed)
-
-        # Apply aspect ratio override.
-        width, height, prompt_pos = override_width_height(prompt_pos, width, height)
-
-        contexts = []
-        for i in range(1, 5):
-            if i > num_contexts:
-                contexts.append(None)
-                continue
-
-            # Extract which checkpoint to use for this context, and with what overridden parameters (if any).
-            ctx_pos, ctx_params = extract_context_tags(prompt_pos, str(i))
-            ctx_neg, _ = extract_context_tags(prompt_neg, str(i))
-
-            checkpoint = checkpoint_datas.get(ctx_params.pop('checkpoint', "").lower(), None)
-            if not checkpoint:
-                if i == 0:
-                    raise Exception(f"MegaPrompt error: A checkpoint is not specified for Context {i}.\nDo so by plugging in at least one Context Data, and then triggering it in the positive prompt using <context_{i}:checkpoint=CheckpointName>your prompt here</context_{i}>.")
-                else:
-                    contexts.append(None)
-                    continue
-
-            # Apply the checkpoint's associated +/- prompts..
-            ctx_pos, ctx_neg = apply_checkpoint_prompt(ctx_pos, ctx_neg, checkpoint)
-
-            # Remove contents of tags which are marked for removal using exclamation mark syntax: <!tag>
-            # Useful when a prompt wants to signify that it's not compatible with something.
-            # Eg., to easily prompt a blink, mark descriptions of <eye>eyes</eye>, then use "blink <!eye>" in prompt.
-            # NOTE: This must come AFTER apply_checkpoint_prompt(), otherwise it will remove the <!modelprompt> 
-            # keyword before it has a chance to trigger.
-            prompt_pos = remove_excluded_tags(prompt_pos)
-
-            # Extract lora tags.
-            _cleaned_prompt, lora_tags = extract_lora_tags(ctx_pos)
-
-            # Move contents of <neg> tags to negative prompt, 
-            # and remove exact matches of negative prompt words from the positive prompt.
-            ctx_pos, ctx_neg = move_neg_tags(ctx_pos, ctx_neg)
-
-            # Move contents of <!> tags to beginning of prompt.
-            ctx_pos = reorder_prompt(ctx_pos)
-
-            ctx_pos = remove_all_tag_syntax(tidy_prompt(ctx_pos))
-            ctx_neg = remove_all_tag_syntax(tidy_prompt(ctx_neg))
-
-            context = MetContext(
-                checkpoint=checkpoint,
-                # NOTE: It's important to offset the noise seed for subsequent samplers.
-                # Stacking results of different checkpoints with the same noise pattern has poor results for some reason.
-                noise_seed=noise_seed+i,
-                prompt_seed=prompt_seed,
-                width=width,
-                height=height,
-                pos_prompt=ctx_pos,
-                neg_prompt=ctx_neg,
-                loras=lora_tags,
-            )
-            if i == 1 and "noise" not in ctx_params:
-                ctx_params["noise"] = 1.0
-            for obj in (context, checkpoint):
-                for key, value in ctx_params.items():
-                    if hasattr(obj, key):
-                        val_type = type(getattr(obj, key))
-                        value = val_type(value)
-                        setattr(obj, key, value)
-
-            # TODO: consider adding an equality check to previous context to avoid adding the same context multiple times, since that's kinda pointless.
-            # Would also allow us to remove the num_context input, since it would become implicit. (maybe add a default checkpoint input instead so we aren't forced to use context def syntax)
-
-            contexts.append(context)
-
-        last_context = next((c for c in reversed(contexts) if c), None)
-        face_context = None
-        if use_facedetailer and last_context:
-            _, face_pos = extract_face_prompts(prompt_pos)
-            _, face_neg = extract_face_prompts(prompt_neg)
-            # Move contents of <neg> tags to negative prompt, 
-            # and remove exact matches of negative prompt words from the positive prompt.
-            # face_pos, face_neg = move_neg_tags(face_pos, face_neg)
-            face_pos = remove_all_tag_syntax(tidy_prompt(face_pos))
-            face_neg = remove_all_tag_syntax(tidy_prompt(face_neg))
-            face_context = MetFaceContext(
-                checkpoint=last_context.checkpoint,
-                face_iter=1,
-                face_noise=0.32,
-                pos_prompt=face_pos,
-                neg_prompt=face_neg,
-                noise_seed=last_context.noise_seed+4,
-                loras=last_context.loras,
-            )
-            for key, value in ctx_params.items():
-                if hasattr(face_context, key):
-                    val_type = type(getattr(face_context, key))
-                    value = val_type(value)
-                    setattr(face_context, key, value)
-
-        return (*contexts, face_context)
 
 def unroll_tag_stack(prompt: str, tag_stack: dict[str, str]) -> str:
     tag_names = list(tag_stack.keys())
@@ -186,17 +53,19 @@ def move_neg_tags(positive: str, negative: str) -> tuple[str, str]:
             positive = re.sub(rf"(,\s*|^)\(?{neg_word}(:?.*\))?", ", ", positive)
     return positive, negative
 
-def override_width_height(prompt, width, height) -> tuple[int, int, str]:
+def override_width_height(prompt, image: Tensor) -> tuple[str, Tensor]:
+    width, height = image.shape[2], image.shape[1]
     short = min(width, height)
     long = max(width, height)
+    prompt = tidy_prompt(prompt)
     if FORCE_PORTRAIT in prompt:
-        return short, long, prompt.replace(FORCE_PORTRAIT, "")
+        return prompt.replace(FORCE_PORTRAIT, ""), image.permute(0, 2, 1, 3).contiguous()
     elif FORCE_LANDSCAPE in prompt:
-        return long, short, prompt.replace(FORCE_LANDSCAPE, "")
+        return prompt.replace(FORCE_LANDSCAPE, ""), image.permute(0, 2, 1, 3).contiguous()
     elif FORCE_SQUARE in prompt:
-        average = long+short/2
-        return average, average, prompt.replace(FORCE_SQUARE, "")
-    return width, height, prompt
+        average = int(long+short/2)
+        return prompt.replace(FORCE_SQUARE, ""), EmptyImage().generate(average, average)[0]
+    return prompt, image
 
 def apply_checkpoint_prompt(prompt_pos: str, prompt_neg: str, checkpoint: MetCheckpointPreset) -> tuple[str, str]:
     if FORCE_NO_CP_PROMPT not in prompt_pos:
@@ -478,7 +347,6 @@ class TagStacker:
         test_brackets(content, tag=tag)
         tag_stack.update({tag: content})
         return (tag_stack,)
-
 
 def test_brackets(prompt: str, tag="") -> bool:
     """
