@@ -31,6 +31,8 @@ RE_TAG_NAMES = re.compile(r"<\/((?:\w|\s|!)+)>")
 RE_EXCLUDE = re.compile(r"<!((?:\w|\s)+)>")
 RE_LORA = re.compile(r"<lora.*?>")
 
+PREV_MODEL = None
+
 # TODO: 
 # - Rename Metxyz classes to have better names, eg. CheckpointConfig->CheckpointConfig, PrepareCheckpoint->ConfigureCheckpoint
 # - Rename their "identifier" input to "alias", although I really don't want to recreate all of them in my workflow (could just search and replace in the .json though...)
@@ -314,15 +316,22 @@ def extract_face_prompts(prompt: str) -> tuple[str, str]:
     cleaned_prompt, face_prompt = extract_tag_from_text(prompt, FACE_TAG)
     return cleaned_prompt, face_prompt
 
-
 def render(checkpoint_config: CheckpointConfig, prompt_pos, prompt_neg, start_image=None, noise_seed=0, noise_strength=1.0, pass_index=1, lora_data: dict[str, float]={}):
     steps = checkpoint_config.steps
     cfg = checkpoint_config.cfg
     sampler_name = checkpoint_config.sampler
     scheduler = checkpoint_config.scheduler
 
-    model, clip, vae = CheckpointLoaderSimple().load_checkpoint(checkpoint_config.path)
-    model, clip = apply_loras(model, clip, lora_data)
+    global PREV_MODEL
+    if PREV_MODEL and PREV_MODEL[0]==lora_data and PREV_MODEL[1]==checkpoint_config.path:
+        # Optimization: If the checkpoint and LoRAs are the same as in 
+        # previous prompt, don't load the models again.
+        # NOTE: Not sure if this can cause the model to be stuck in memory for ever!
+        model, clip, vae = PREV_MODEL[2:]
+    else:
+        model, clip, vae = CheckpointLoaderSimple().load_checkpoint(checkpoint_config.path)
+        model, clip = apply_loras(model, clip, lora_data)
+        PREV_MODEL = lora_data, checkpoint_config.path, model, clip, vae
 
     clip_encoder = CLIPTextEncode()
     pos_encoded = clip_encoder.encode(clip, prompt_pos)[0]
