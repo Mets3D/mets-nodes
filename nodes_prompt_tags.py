@@ -42,29 +42,6 @@ class RegexNode:
             print(f"Non-Regex Error: {str(e)}")
             return ("",)
 
-class ChainReplace:
-    NAME="Chain Replace"
-    DESCRIPTION = ("A simple string search and replace operation that is designed to nicely chain together. Can be used to build complex randomized prompts.")
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("string_replaced",)
-    FUNCTION = "replace_string"
-    CATEGORY = "MetsNodes/Tag Tools"
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "text": ("STRING", {"multiline": False, "tooltip": "The string to search and replace within."}),
-                "replace_with": ("STRING", {"multiline": True, "tooltip": "The string which will be substituted to the input."}),
-                "replaced_by": ("STRING", {"multiline": False, "tooltip": "The specific tag to remove."}),
-            }
-        }
-
-    def replace_string(self, text: str, replace_with: str, replaced_by: str) -> Tuple[str]:
-        if not replaced_by:
-            return text
-        return (text.replace(replaced_by, replace_with),)
-
 class ExtractTagFromString:
     NAME = "Extract Tag From String"
     DESCRIPTION = (
@@ -90,6 +67,31 @@ class ExtractTagFromString:
     def extract(self, text: str, tag: str, preserve_tag_content: bool = False) -> Tuple[str, str]:
         clean_text, content = extract_tag_from_text(text, tag, remove_content=(not preserve_tag_content))
         return clean_text.strip(), content
+
+def extract_tag_from_text(
+    text: str,
+    tag: str,
+    remove_content: bool = False
+) -> Tuple[str, str]:
+    """
+    Removes <tag>...</tag> blocks from `text`.
+    
+    - Always removes the <tag> and </tag> markers.
+    - If remove_content=True, also removes the content inside the tags from clean_text.
+    - Always returns the tag contents as a comma-joined string.
+    """
+    pattern = fr"<{tag}>(.*?)<\/{tag}>"
+    matches = re.findall(pattern, text, re.DOTALL)
+    tag_content = ", ".join(m.strip() for m in matches if m.strip())
+
+    if remove_content:
+        # Remove entire <tag>...</tag>
+        clean_text = re.sub(pattern, "", text, flags=re.DOTALL)
+    else:
+        # Replace with inner content only (strip tags)
+        clean_text = re.sub(pattern, lambda m: m.group(1), text, flags=re.DOTALL)
+
+    return clean_text, tag_content
 
 class AutoExtractTags:
     NAME="Auto Extract Tags From String"
@@ -137,7 +139,6 @@ def auto_extract_tags(text: str) -> tuple[str, str]:
 
     return clean_text.strip(), ", ".join(tag_contents)
 
-
 class StableRandomChoiceNode:
     NAME="Random Choice"
     @classmethod
@@ -159,24 +160,6 @@ class StableRandomChoiceNode:
     def randomize_prompt(self, prompt, seed=0):
         randomized = randomize_prompt(prompt, seed)
         return (randomized, )
-
-class PromptTidy:
-    NAME="Tidy Prompt"
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "prompt": ("STRING", {"description": "Input prompt."}),
-            }
-        }
-
-    RETURN_TYPES = ("STRING",)
-    FUNCTION = "tidy_prompt"
-    CATEGORY = "MetsNodes"
-    DESCRIPTION="""Remove excess commas, newlines, whitespaces from a prompt-style string."""
-
-    def tidy_prompt(self, prompt):
-        return (tidy_prompt(prompt), )
 
 def randomize_prompt(prompt, seed=0) -> str:
     """
@@ -212,6 +195,24 @@ def randomize_prompt(prompt, seed=0) -> str:
     prompt = tidy_prompt(prompt)
     return prompt
 
+class PromptTidy:
+    NAME="Tidy Prompt"
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "prompt": ("STRING", {"description": "Input prompt."}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    FUNCTION = "tidy_prompt"
+    CATEGORY = "MetsNodes"
+    DESCRIPTION="""Remove excess commas, newlines, whitespaces from a prompt-style string."""
+
+    def tidy_prompt(self, prompt):
+        return (tidy_prompt(prompt), )
+
 def tidy_prompt(prompt: str) -> str:
     prompt = remove_comment_lines(prompt)
     new_lines = []
@@ -229,28 +230,3 @@ def tidy_prompt(prompt: str) -> str:
 
 def remove_comment_lines(prompt: str) -> str:
     return re.sub(r"#.*", "", prompt)
-
-def extract_tag_from_text(
-    text: str,
-    tag: str,
-    remove_content: bool = False
-) -> Tuple[str, str]:
-    """
-    Removes <tag>...</tag> blocks from `text`.
-    
-    - Always removes the <tag> and </tag> markers.
-    - If remove_content=True, also removes the content inside the tags from clean_text.
-    - Always returns the tag contents as a comma-joined string.
-    """
-    pattern = fr"<{tag}>(.*?)<\/{tag}>"
-    matches = re.findall(pattern, text, re.DOTALL)
-    tag_content = ", ".join(m.strip() for m in matches if m.strip())
-
-    if remove_content:
-        # Remove entire <tag>...</tag>
-        clean_text = re.sub(pattern, "", text, flags=re.DOTALL)
-    else:
-        # Replace with inner content only (strip tags)
-        clean_text = re.sub(pattern, lambda m: m.group(1), text, flags=re.DOTALL)
-
-    return clean_text, tag_content

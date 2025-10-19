@@ -1,15 +1,15 @@
-from .regex_nodes import (
-    RegexNode, ExtractTagFromString, AutoExtractTags, ChainReplace,
+from .nodes_prompt_tags import (
+    RegexNode, ExtractTagFromString, AutoExtractTags,
     StableRandomChoiceNode, PromptTidy, 
 )
-from .model_downloader import DownloadCivitaiModel
-from .mega_prompt import ContextBreak, FaceContextBreak, PrepareCheckpoint, PrepareLoRA, TagStacker, TagTweaker
-from .image_adjust import AdjustImageNode
-from .render_pass_node import RenderPass, RenderPass_Prepare, RenderPass_Face
+from .nodes_downloader import DownloadCivitaiModel
+from .nodes_databases import PrepareCheckpoint, PrepareLoRA, TagStacker, TagTweaker
+from .nodes_image import AdjustImageNode
+from .nodes_render_pass import RenderPass, RenderPass_Prepare, RenderPass_Face
 
 nodes = [
-    RegexNode, ExtractTagFromString, AutoExtractTags, ChainReplace, StableRandomChoiceNode, PromptTidy, 
-    DownloadCivitaiModel, ContextBreak, FaceContextBreak, PrepareCheckpoint, PrepareLoRA, TagStacker, TagTweaker, AdjustImageNode,
+    RegexNode, ExtractTagFromString, AutoExtractTags, StableRandomChoiceNode, PromptTidy, 
+    DownloadCivitaiModel, PrepareCheckpoint, PrepareLoRA, TagStacker, TagTweaker, AdjustImageNode,
     RenderPass, RenderPass_Prepare, RenderPass_Face
 ]
 

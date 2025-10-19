@@ -1,24 +1,40 @@
 import re
 from pathlib import Path
 
+from .dataclasses import LoRAConfig, CheckpointConfig
+from .nodes_prompt_tags import randomize_prompt, tidy_prompt, extract_tag_from_text
+from .nodes_downloader import DownloadCivitaiModel
+
 import comfy
 import folder_paths
-from nodes import CheckpointLoaderSimple, KSampler, CLIPTextEncode, VAEEncode, VAEDecode, EmptyImage, LatentBlend, EmptyLatentImage, ImageScaleBy, NODE_CLASS_MAPPINGS
-
-from .met_context import LoRA_Config, MetCheckpointPreset
-from .mega_prompt import (
-    unroll_tag_stack, move_neg_tags, override_width_height, apply_checkpoint_prompt, extract_lora_tags, reorder_prompt, 
-    remove_excluded_tags, remove_all_tag_syntax, extract_face_prompts
+from nodes import (
+    CheckpointLoaderSimple, KSampler, CLIPTextEncode, 
+    VAEEncode, VAEDecode, EmptyImage, EmptyLatentImage, 
+    ImageScaleBy, NODE_CLASS_MAPPINGS
 )
-from .regex_nodes import randomize_prompt, tidy_prompt
-from .model_downloader import DownloadCivitaiModel
+
+from torch import Tensor
+
+NEG_TAG = "neg"
+FACE_TAG = "face"
+TOP_TAG = "!"
+FORCE_NO_CP_PROMPT = "<!modelprompt>"
+FORCE_PORTRAIT = "<ratio:portrait>"
+FORCE_LANDSCAPE = "<ratio:landscape>"
+FORCE_SQUARE = "<ratio:square>"
+CONTEXT_PREFIX = "context_"
+
+# NOTE: BE CAREFUL WITH REGEX!! Complex Regular Expressions on complex prompts can turn into what's known as a Runaway Regex, and require near-infinite calculation!
+# KEEP THESE SIMPLE, and then do simple string operations.
+RE_CONTEXT_TAGS = re.compile(rf"(?s)<{CONTEXT_PREFIX}.*?>.*?<\/{CONTEXT_PREFIX}.*?>")
+RE_TAG_NAMES = re.compile(r"<\/((?:\w|\s|!)+)>")
+RE_EXCLUDE = re.compile(r"<!((?:\w|\s)+)>")
+RE_LORA = re.compile(r"<lora.*?>")
 
 # TODO: 
-# - Rename Metxyz classes to have better names, eg. MetCheckpointPreset->CheckpointConfig, PrepareCheckpoint->ConfigureCheckpoint
+# - Rename Metxyz classes to have better names, eg. CheckpointConfig->CheckpointConfig, PrepareCheckpoint->ConfigureCheckpoint
 # - Rename their "identifier" input to "alias", although I really don't want to recreate all of them in my workflow (could just search and replace in the .json though...)
 # - Add prompt processing to RenderPass node
-
-# Remove a bunch of old technology, like ChainReplace, MegaPrompt, etc.
 
 RE_LORA_TAGS = re.compile(r"<lora:.*?>")
 
@@ -58,7 +74,7 @@ class RenderPass:
         pass_index = data.get("pass_index", 0) + 1
         data['pass_index'] = pass_index
 
-        ckpt_config: MetCheckpointPreset|None = next((cp for identifier, cp in checkpoint_datas.items() if cp.path==checkpoint_name), None)
+        ckpt_config: CheckpointConfig|None = next((cp for identifier, cp in checkpoint_datas.items() if cp.path==checkpoint_name), None)
         if not ckpt_config:
              raise Exception(f"Checkpoint config not found for: {checkpoint_name}\nYou need to provide it by plugging a Prepare Checkpoint node into a Prepare Render Pass Node, and then plugging that into this node.")
 
@@ -77,9 +93,6 @@ class RenderPass:
         # Apply aspect ratio override. (<ratio:portrait/landscape/square>)
         # This feature may discard or rotate the image, and is meant to be used with a blank input image.
         ret = override_width_height(prompt_pos, image)
-        print("RETURN:")
-        print(ret)
-        print("END")
         prompt_pos, image = override_width_height(prompt_pos, image)
 
         if image == None:
@@ -175,7 +188,7 @@ class RenderPass_Face:
         image = image if image!=None else data.get('last_image', None)
         if model==None or vae==None or clip==None or image==None:
             raise Exception("Missing data for Face Pass node.\nYou must plug in a Render Pass node's data output into this node's data input.")
-        ckpt_config: MetCheckpointPreset|None = data.get('last_checkpoint_config', None)
+        ckpt_config: CheckpointConfig|None = data.get('last_checkpoint_config', None)
         if not ckpt_config:
             raise Exception("Checkpoint config not provided.\nYou must plug in a Render Pass node's data output into this node's data input.")
         if 'UltralyticsDetectorProvider' not in NODE_CLASS_MAPPINGS:
@@ -207,7 +220,102 @@ class RenderPass_Face:
         )
         return (data, results[0], prompt_pos, prompt_neg)
 
-def render(checkpoint_config: MetCheckpointPreset, prompt_pos, prompt_neg, start_image=None, noise_seed=0, noise_strength=1.0, pass_index=1, lora_data: dict[str, float]={}):
+### String functions ###
+def unroll_tag_stack(prompt: str, tag_stack: dict[str, str]) -> str:
+    tag_names = list(tag_stack.keys())
+    def present_tags(prompt):
+        return {tag for tag in tag_names if f'<{tag}>' in prompt}
+    def unroll_tag(prompt, tag):
+        return prompt.replace(f'<{tag}>', tag_stack[tag])
+
+    tags_to_unroll = present_tags(prompt)
+    while tags_to_unroll:
+        for tag in tags_to_unroll:
+            prompt = unroll_tag(prompt, tag)
+        tags_to_unroll = present_tags(prompt)
+
+    return prompt
+
+def move_neg_tags(positive: str, negative: str) -> tuple[str, str]:
+    """We support <neg>Moving this from positive to negative prompt</neg> and also excluding negative keywords from the positive prompt."""
+    # Extract negative tags.
+    positive, neg_tag_contents = extract_tag_from_text(positive, NEG_TAG, remove_content=True)
+    negative += ", " + neg_tag_contents
+    for neg_word in negative.split(","):
+        neg_word = neg_word.strip()
+        if not neg_word:
+            continue
+        if neg_word in positive:
+            positive = re.sub(rf"(,\s*|^)\(?{neg_word}(:?.*\))?", ", ", positive)
+    return positive, negative
+
+def override_width_height(prompt, image: Tensor) -> tuple[str, Tensor]:
+    width, height = image.shape[2], image.shape[1]
+    short = min(width, height)
+    long = max(width, height)
+    prompt = tidy_prompt(prompt)
+    if FORCE_PORTRAIT in prompt:
+        return prompt.replace(FORCE_PORTRAIT, ""), image.permute(0, 2, 1, 3).contiguous()
+    elif FORCE_LANDSCAPE in prompt:
+        return prompt.replace(FORCE_LANDSCAPE, ""), image.permute(0, 2, 1, 3).contiguous()
+    elif FORCE_SQUARE in prompt:
+        average = int(long+short/2)
+        return prompt.replace(FORCE_SQUARE, ""), EmptyImage().generate(average, average)[0]
+    return prompt, image
+
+def apply_checkpoint_prompt(prompt_pos: str, prompt_neg: str, checkpoint: CheckpointConfig) -> tuple[str, str]:
+    if FORCE_NO_CP_PROMPT not in prompt_pos:
+        # Put checkpoint's quality tags at START of +prompt. (maybe not important)
+        prompt_pos = ",\n".join([checkpoint.model_pos_prompt, prompt_pos])
+    else:
+        prompt_pos = prompt_pos.replace(FORCE_NO_CP_PROMPT, "")
+
+    if FORCE_NO_CP_PROMPT not in prompt_neg:
+        # Put checkpoint's negative tags at END of -prompt. (maybe not important)
+        prompt_neg += checkpoint.model_neg_prompt
+    else:
+        prompt_neg = prompt_neg.replace(FORCE_NO_CP_PROMPT, "")
+
+    return prompt_pos, prompt_neg
+
+def extract_lora_tags(prompt: str) -> tuple[str, list[str]]:
+    return RE_LORA.sub("", prompt), RE_LORA.findall(prompt)
+
+def reorder_prompt(prompt: str) -> str:
+    prompt_pos, tag_content = extract_tag_from_text(prompt, TOP_TAG, remove_content=True)
+    return ", ".join([tag_content, prompt_pos])
+
+def remove_excluded_tags(prompt: str) -> str:
+    # Find all <!tag> instructions.
+    tags_marked_for_exclude = set(RE_EXCLUDE.findall(prompt))
+
+    # Remove the exclusion instruction tags themselves, now that we have them stored.
+    prompt = RE_EXCLUDE.sub("", prompt)
+
+    for exclude_tag in tags_marked_for_exclude:
+        # Extract tag content and remove the tags themselves, no matter what.
+        prompt, _discard = extract_tag_from_text(prompt, exclude_tag, remove_content=True)
+
+    return prompt
+
+def remove_all_tag_syntax(prompt: str) -> str:
+    """Remove all <tag></tag> syntax strings. Useful at the end of prompt processing to remove leftover tags if they weren't used."""
+    # Detect all tag names present
+    all_tag_names = set(RE_TAG_NAMES.findall(prompt))
+
+    for tag in all_tag_names:
+        # Remove the tags themselves, no matter what.
+        prompt, content = extract_tag_from_text(prompt, tag, remove_content=False)
+
+    return tidy_prompt(prompt)
+
+def extract_face_prompts(prompt: str) -> tuple[str, str]:
+    # Extract contents of <face> tags to send on to the FaceDetailer.
+    cleaned_prompt, face_prompt = extract_tag_from_text(prompt, FACE_TAG)
+    return cleaned_prompt, face_prompt
+
+
+def render(checkpoint_config: CheckpointConfig, prompt_pos, prompt_neg, start_image=None, noise_seed=0, noise_strength=1.0, pass_index=1, lora_data: dict[str, float]={}):
     steps = checkpoint_config.steps
     cfg = checkpoint_config.cfg
     sampler_name = checkpoint_config.sampler
@@ -250,7 +358,7 @@ def apply_loras(model, clip, lora_data: dict[str, int]):
 
     return model_lora, clip_lora
 
-def ensure_required_loras(prompt: str, lora_configs: dict[str, LoRA_Config], api_token: str):
+def ensure_required_loras(prompt: str, lora_configs: dict[str, LoRAConfig], api_token: str):
     # Extract lora tags.
     prompt_clean, lora_tags = extract_lora_tags(prompt)
 
@@ -298,7 +406,6 @@ def ensure_required_loras(prompt: str, lora_configs: dict[str, LoRA_Config], api
         return ensure_required_loras(prompt, lora_configs, api_token)
 
     return prompt_clean, lora_weights
-
 
 class RenderPass_Prepare:
     NAME = "Prepare Render Pass"

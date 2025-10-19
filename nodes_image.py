@@ -1,4 +1,4 @@
-import torch
+from torch import Tensor, is_tensor
 
 class AdjustImageNode:
     @classmethod
@@ -18,9 +18,9 @@ class AdjustImageNode:
     FUNCTION = "adjust_image"
     CATEGORY = "MetsNodes"
 
-    def adjust_image(self, image, brightness, contrast, saturation):
+    def adjust_image(self, image: Tensor, brightness=1.0, contrast=1.0, saturation=1.0):
         # Ensure image is float tensor
-        if not torch.is_tensor(image):
+        if not is_tensor(image):
             raise ValueError("Input must be a torch.Tensor")
         
         # Brightness
