@@ -1,11 +1,10 @@
-These nodes were designed to allow the creation of a workflow where you want to:
-- Chain multiple checkpoints together, eg. render an anime image with txt2img, and then upscale and refine it with a realistic model, or even have a stylized step inbetween.
-- Randomize your prompt in a highly controlled way by defining "tags", which you can reference in your prompt to replace a keyword with all the prompt words that describe it. For example, once you define a prompt which describes a character, you can always bring that character into your prompt with a single keyword, eg. `<miku>`. You can also define random variations within these tags, such as different outfits, hairstyles, etc, with the usual `{option a|option b}` syntax.
-- Share your model dependencies with other users; You can store the CivitAI model IDs in nodes, so if another computer doesn't have them, they will be automatically downloaded.
-
 ![](docs/screenshot.png)
 
 You can drag [this](docs/example.png) image into ComfyUI for an example workflow showing off most of the features.
+
+### Intended Workflow:
+- Chain render passes with different checkpoints together, eg. render an anime image with txt2img, and then upscale and refine it with a realistic model, or even have a stylized step inbetween.
+- Randomize your prompt in a highly controlled way by defining "tags", which you can reference in your prompt to replace a keyword with all the prompt words that describe it. For example, once you define a prompt which describes a character, you can always bring that character into your prompt with a single keyword, eg. `<miku>`. You can also define random variations within these tags, such as different outfits, hairstyles, etc, with the usual `{option a|option b}` syntax.
 
 ### Primary Nodes
 - Render Pass: This node includes a sampler, and is designed to be chainable, to allow conveniently building a workflow which chains multiple checkpoints together. For example, your first Render Pass could take an Empty Image as an input, and fully replace it with noise (txt2img), and then a 2nd render pass can take the result, upscale by 50%, and add 50% noise (img2img).
@@ -19,7 +18,7 @@ You can drag [this](docs/example.png) image into ComfyUI for an example workflow
 
 ### Misc Nodes
 The functionality of these nodes is built into the RenderPass node, but you can also use them outside of that framework, if you so wish.
-- CivitAI Model Downloader: I wasn't happy with the one that's online so I made my own. You can enter a model ID, your API key, a desired folder path, file name, and even model version name, and it will download it.
+- CivitAI Model Downloader: I wasn't happy with the one that's online so I made my own. You can enter a model ID, your API key, a desired folder path, file name, and even model version name, and it will download it. Will automatically place checkpoints and LoRAs in the appropriate folders.
 - StableRandomChoice: I wasn't happy with how ComfyUI or WildCardProcessor handles randomized elements of a prompt, such as {red|green|blue}, particularly when a lot of such randomized elements were in a prompt. When you modify the prompt without adding or removing any randomized elements, you might get a totally different result. Not with this node. Only if you add or remove random elements.
 - Tidy Prompt: Adds commas at end of lines, removes lines starting with `#`, remove excess commas.
 - Extract Tag From String: Kinda like an HTML tag, eg. if the input string is `a girl with <eye>blue eyes</eye>`, this node will extract the `blue eyes` part if you ask it to extract the `eye` tag. Useful for not having to jump between so many different input boxes for prompts, since you can eg. use <neg>to send stuff to your negative prompt</neg> or <face>to send stuff to your FaceDetailer prompt</face>.
