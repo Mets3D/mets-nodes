@@ -82,6 +82,8 @@ class RenderPass:
         if not ckpt_config:
              raise Exception(f"Checkpoint config not found for: {checkpoint_name}\nYou need to provide it by plugging a Prepare Checkpoint node into a Prepare Render Pass Node, and then plugging that into this node.")
 
+        prompt_pos = tidy_prompt(prompt_pos)
+        prompt_neg = tidy_prompt(prompt_neg)
         prompt_pos = unroll_tag_stack(prompt_pos, tag_stack)
         prompt_neg = unroll_tag_stack(prompt_neg, tag_stack)
 
@@ -328,7 +330,7 @@ def render(checkpoint_config: CheckpointConfig, prompt_pos, prompt_neg, start_im
 
     global MODEL_CACHE
     start = time.time()
-    if checkpoint_config.path in MODEL_CACHE:
+    if checkpoint_config.path in MODEL_CACHE and False:
         # Optimization: If the checkpoint and LoRAs are the same as in 
         # previous prompt, don't load the models again.
         # NOTE: Not sure if this can cause the model to be stuck in memory for ever!
