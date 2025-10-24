@@ -10,8 +10,10 @@ from collections import OrderedDict
 import comfy
 import folder_paths
 from nodes import (
-    CheckpointLoaderSimple, KSampler, CLIPTextEncode, 
-    VAEEncode, VAEDecode, EmptyImage, EmptyLatentImage, 
+    CheckpointLoaderSimple, KSampler, 
+    CLIPTextEncode, CLIPSetLastLayer, 
+    VAEEncode, VAEDecode, 
+    EmptyImage, EmptyLatentImage, 
     ImageScaleBy, NODE_CLASS_MAPPINGS
 )
 
@@ -37,7 +39,6 @@ MODEL_CACHE = OrderedDict() # filepath : loaded model, max 5 to avoid unnecessar
 
 # TODO: 
 # - Rename Metxyz classes to have better names, eg. CheckpointConfig->CheckpointConfig, PrepareCheckpoint->ConfigureCheckpoint
-# - Rename their "identifier" input to "alias", although I really don't want to recreate all of them in my workflow (could just search and replace in the .json though...)
 # - Add prompt processing to RenderPass node
 
 RE_LORA_TAGS = re.compile(r"<lora:.*?>")
@@ -62,7 +63,7 @@ class RenderPass:
     RETURN_NAMES = ("Data", "Image", "Prompt_Pos", "Prompt_Neg")
     RETURN_TYPES = ("RENDER_PASS_DATA","IMAGE", "STRING", "STRING")
     FUNCTION = "render_pass_execute"
-    CATEGORY = "MetsNodes"
+    CATEGORY = "Met's Nodes/Render Pass"
     DESCRIPTION="""Render an image with the data provided."""
     OUTPUT_NODE = True
 
@@ -78,7 +79,7 @@ class RenderPass:
         pass_index = data.get("pass_index", 0) + 1
         data['pass_index'] = pass_index
 
-        ckpt_config: CheckpointConfig|None = next((cp for identifier, cp in checkpoint_datas.items() if cp.path==checkpoint_name), None)
+        ckpt_config: CheckpointConfig|None = next((cp for path, cp in checkpoint_datas.items() if cp.path==checkpoint_name), None)
         if not ckpt_config:
              raise Exception(f"Checkpoint config not found for: {checkpoint_name}\nYou need to provide it by plugging a Prepare Checkpoint node into a Prepare Render Pass Node, and then plugging that into this node.")
 
@@ -179,7 +180,7 @@ class RenderPass_Face:
     RETURN_NAMES = ("Data", "Image", "Prompt_Pos", "Prompt_Neg")
     RETURN_TYPES = ("RENDER_PASS_DATA","IMAGE", "STRING", "STRING")
     FUNCTION = "face_pass_execute"
-    CATEGORY = "MetsNodes"
+    CATEGORY = "Met's Nodes/Render Pass"
     DESCRIPTION="""Simplified wrapper for the Impact Pack's FaceDetailer node."""
     OUTPUT_NODE = True
 
@@ -333,9 +334,11 @@ def render(checkpoint_config: CheckpointConfig, prompt_pos, prompt_neg, start_im
     if checkpoint_config.path in MODEL_CACHE and False:
         # Optimization: If the checkpoint and LoRAs are the same as in 
         # previous prompt, don't load the models again.
-        # NOTE: Not sure if this can cause the model to be stuck in memory for ever!
+        # NOTE: This results in memory leak console warnings, which seems fair... Sad, though.
         model, clip, vae = MODEL_CACHE.get(checkpoint_config.path)
     else:
+        # NOTE: We cannot download a missing model because the frontend will raise an error during input validation,
+        # which is very fucking frustrating.
         model, clip, vae = CheckpointLoaderSimple().load_checkpoint(checkpoint_config.path)
         MODEL_CACHE[checkpoint_config.path] = model, clip, vae
         if len(MODEL_CACHE) > 5:
@@ -346,6 +349,8 @@ def render(checkpoint_config: CheckpointConfig, prompt_pos, prompt_neg, start_im
     print("LoRA load: ", time.time()-start)
 
     clip_encoder = CLIPTextEncode()
+    clip_skip = CLIPSetLastLayer()
+    clip = clip_skip.set_last_layer(clip, checkpoint_config.clip_skip)[0]
     pos_encoded = clip_encoder.encode(clip, prompt_pos)[0]
     neg_encoded = clip_encoder.encode(clip, prompt_neg)[0]
 
@@ -443,15 +448,15 @@ class RenderPass_Prepare:
                 "lora_datas": ("LORA_DATA",),
                 "civitai_api_key": ("STRING",),
                 "tag_stack": ("TAG_STACK",),
-                "noise_seed": ("INT", {"control_after_generate": True, "tooltip": "Image noise seed"}),
-                "prompt_seed": ("INT", {"control_after_generate": True, "tooltip": "Seed to use for prompt randomization when the prompt uses {red|green|blue} syntax"}),
+                "noise_seed": ("INT", {"control_after_generate": True, "tooltip": "Image noise seed", "min": 0, "max": 2**64}),
+                "prompt_seed": ("INT", {"control_after_generate": True, "tooltip": "Seed to use for prompt randomization when the prompt uses {red|green|blue} syntax", "min": 0, "max": 2**64}),
             },
         }
 
     RETURN_NAMES = ("Data", )
     RETURN_TYPES = ("RENDER_PASS_DATA",)
     FUNCTION = "render_pass_prepare"
-    CATEGORY = "MetsNodes"
+    CATEGORY = "Met's Nodes/Render Pass"
     DESCRIPTION="""Render an image with the data provided."""
 
     def render_pass_prepare(self, checkpoint_datas={}, lora_datas={}, civitai_api_key="", tag_stack={}, noise_seed=0, prompt_seed=0):

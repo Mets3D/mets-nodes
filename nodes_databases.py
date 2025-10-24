@@ -10,14 +10,14 @@ class PrepareCheckpoint:
     DESCRIPTION = ("Stack information about checkpoints, to later easily switch between checkpoints in a Render Pass node.")
     RETURN_NAMES, RETURN_TYPES = map(list, zip(*{"Checkpoint Datas": 'CHECKPOINT_DATAS'}.items()))
     FUNCTION = "prepare_checkpoint"
-    CATEGORY = "MetsNodes"
+    CATEGORY = "Met's Nodes/Render Pass"
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "optional": {
                 "checkpoint_datas": ("CHECKPOINT_DATAS", {"tooltip": "Checkpoint datas"}),
-                "identifier": ("STRING", {"tooltip": "Name used to identify this checkpoint preset in the prompt processor"}),
+                "identifier": ("STRING", {"tooltip": "Legacy value, does nothing"}),
                 "path": ("STRING", {"tooltip": "Filepath relative to checkpoints folder, excluding filename"}),
                 "filename": ("STRING", {"tooltip": "Filename of checkpoint file (without extension)"}),
                 "civitai_id": ("INT", {"tooltip": f"CivitAI model ID. Can be found in the model's page URL: civitai.com/models/<model id>", "min": 0, "max": 100000000}),
@@ -33,11 +33,15 @@ class PrepareCheckpoint:
         }
 
     def prepare_checkpoint(self, **kwargs):
+        path = os.sep.join([kwargs['path'], kwargs['filename']+".safetensors"])
+        if path.startswith(os.sep):
+            path = path[1:]
         checkpoint_datas = kwargs.get('checkpoint_datas', {})
-        checkpoint_datas.update({kwargs['identifier'].lower(): CheckpointConfig(
+        checkpoint_datas.update({path: CheckpointConfig(
             civitai_model_id=kwargs['civitai_id'],
+            version=kwargs['version_name'],
             clip_skip=kwargs['clip_skip'],
-            path=os.sep.join([kwargs['path'], kwargs['filename']+".safetensors"])[1:],
+            path=path,
             steps=kwargs['steps'],
             cfg=kwargs['cfg'],
             sampler=kwargs['sampler'],
@@ -52,7 +56,7 @@ class PrepareLoRA:
     DESCRIPTION = ("Stack information about LoRAs, so they can later easily be downloaded and used with a Render Pass node.")
     RETURN_NAMES, RETURN_TYPES = map(list, zip(*{"LoRA Data": 'LORA_DATA'}.items()))
     FUNCTION = "prepare_lora"
-    CATEGORY = "MetsNodes"
+    CATEGORY = "Met's Nodes/Render Pass"
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -81,7 +85,7 @@ class TagStacker:
     DESCRIPTION = ('Define a tag, which can be plugged into the "Prepare Render Pass" node, and un-furled using the <tag> syntax.')
     RETURN_NAMES, RETURN_TYPES = map(list, zip(*{"Tag Stack": 'TAG_STACK'}.items()))
     FUNCTION = "add_tag"
-    CATEGORY = "MetsNodes/Tag Tools"
+    CATEGORY = "Met's Nodes/Render Pass"
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -147,7 +151,7 @@ class TagTweaker:
     DESCRIPTION = ("Search and replace among all value strings of the tag stack")
     RETURN_NAMES, RETURN_TYPES = map(list, zip(*{"Tag Stack": 'TAG_STACK'}.items()))
     FUNCTION = "tweak_tags"
-    CATEGORY = "MetsNodes/Tag Tools"
+    CATEGORY = "Met's Nodes/Render Pass"
 
     @classmethod
     def INPUT_TYPES(cls):

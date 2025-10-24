@@ -16,7 +16,7 @@ class AdjustImageNode:
     RETURN_NAMES = ("Image",)
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "adjust_image"
-    CATEGORY = "MetsNodes"
+    CATEGORY = "Met's Nodes"
 
     def adjust_image(self, image: Tensor, brightness=1.0, contrast=1.0, saturation=1.0):
         # Ensure image is float tensor

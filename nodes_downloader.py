@@ -29,7 +29,7 @@ class DownloadCivitaiModel:
     RETURN_NAMES = ("api_token",)
     OUTPUT_NODE = True
     FUNCTION = "download_model"
-    CATEGORY = "MetsNodes"
+    CATEGORY = "Met's Nodes"
 
     def download_model(self, api_token, model_url, subdir, filename="", version=""):
         # --- 1. Extract model ID ---
