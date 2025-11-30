@@ -83,10 +83,8 @@ class RenderPass:
         if not ckpt_config:
              raise Exception(f"Checkpoint config not found for: {checkpoint_name}\nYou need to provide it by plugging a Prepare Checkpoint node into a Prepare Render Pass Node, and then plugging that into this node.")
 
-        prompt_pos = tidy_prompt(prompt_pos)
-        prompt_neg = tidy_prompt(prompt_neg)
-        prompt_pos = unroll_tag_stack(prompt_pos, tag_stack)
-        prompt_neg = unroll_tag_stack(prompt_neg, tag_stack)
+        prompt_pos = unroll_tag_stack(tidy_prompt(prompt_pos), tag_stack)
+        prompt_neg = unroll_tag_stack(tidy_prompt(prompt_neg), tag_stack)
 
         # Randomize using {blue|red|green} syntax.
         # NOTE: Currently not done for the negative prompt, I don't think it would be useful.
@@ -160,7 +158,7 @@ class RenderPass:
         data['last_vae'] = vae
         data['last_clip'] = clip
         data['last_checkpoint_config'] = ckpt_config
-        return (data, final_image, prompt_pos, prompt_neg)
+        return (data, final_image, tidy_prompt(prompt_pos), tidy_prompt(prompt_neg))
 
 class RenderPass_Face:
     NAME = "Face Render Pass"
@@ -225,7 +223,7 @@ class RenderPass_Face:
              sam_detection_hint='center-1', sam_dilation=0, sam_threshold=0.93, sam_bbox_expansion=0, sam_mask_hint_threshold=0.7,
              sam_mask_hint_use_negative='False', drop_size=10, bbox_detector=bbox_detector, wildcard="", cycle=iterations,
         )
-        return (data, results[0], prompt_pos, prompt_neg)
+        return (data, results[0], tidy_prompt(prompt_pos), tidy_prompt(prompt_neg))
 
 ### String functions ###
 def unroll_tag_stack(prompt: str, tag_stack: dict[str, str]) -> str:
@@ -233,7 +231,7 @@ def unroll_tag_stack(prompt: str, tag_stack: dict[str, str]) -> str:
     def present_tags(prompt):
         return {tag for tag in tag_names if f'<{tag}>' in prompt}
     def unroll_tag(prompt, tag):
-        return prompt.replace(f'<{tag}>', tag_stack[tag])
+        return tidy_prompt(prompt.replace(f'<{tag}>', tag_stack[tag]))
 
     tags_to_unroll = present_tags(prompt)
     while tags_to_unroll:
@@ -241,7 +239,7 @@ def unroll_tag_stack(prompt: str, tag_stack: dict[str, str]) -> str:
             prompt = unroll_tag(prompt, tag)
         tags_to_unroll = present_tags(prompt)
 
-    return prompt
+    return tidy_prompt(prompt)
 
 def move_neg_tags(positive: str, negative: str) -> tuple[str, str]:
     """We support <neg>Moving this from positive to negative prompt</neg> and also excluding negative keywords from the positive prompt."""
@@ -260,7 +258,6 @@ def override_width_height(prompt, image: Tensor) -> tuple[str, Tensor]:
     width, height = image.shape[2], image.shape[1]
     short = min(width, height)
     long = max(width, height)
-    prompt = tidy_prompt(prompt)
     if short==long:
         return prompt, image
     if FORCE_PORTRAIT in prompt and width==long:
@@ -316,7 +313,7 @@ def remove_all_tag_syntax(prompt: str) -> str:
         # Remove the tags themselves, no matter what.
         prompt, content = extract_tag_from_text(prompt, tag, remove_content=False)
 
-    return tidy_prompt(prompt)
+    return prompt
 
 def extract_face_prompts(prompt: str) -> tuple[str, str]:
     # Extract contents of <face> tags to send on to the FaceDetailer.

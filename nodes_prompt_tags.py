@@ -91,7 +91,7 @@ def extract_tag_from_text(
         # Replace with inner content only (strip tags)
         clean_text = re.sub(pattern, lambda m: m.group(1), text, flags=re.DOTALL)
 
-    return clean_text, tag_content
+    return tidy_prompt(clean_text), tag_content
 
 class AutoExtractTags:
     NAME="Auto Extract Tags From String"
@@ -192,8 +192,7 @@ def randomize_prompt(prompt, seed=0) -> str:
         return helper(t)
 
     prompt = helper(prompt)
-    prompt = tidy_prompt(prompt)
-    return prompt
+    return tidy_prompt(prompt)
 
 class PromptTidy:
     NAME="Tidy Prompt"
@@ -215,16 +214,23 @@ class PromptTidy:
 
 def tidy_prompt(prompt: str) -> str:
     prompt = remove_comment_lines(prompt)
-    new_lines = []
-    for line in prompt.split("\n"):
-        line = line.strip()
-        if line.startswith(","):
-            line = line[1:]
-        line = re.sub(r"(\s*,\s*)+", ", ", line)
-        line = line.strip()
-        new_lines.append(line)
-    prompt = "\n".join(new_lines)
-    prompt = re.sub(r"\n\n+", "\n\n", prompt)
+    lines = [line.strip() for line in prompt.split("\n")]
+    clean_lines = []
+
+    for line in lines:
+        # Clean up any unnecessary commas
+        words = [word.strip() for word in line.split(",")]
+        words = [word for word in words if word]
+        if words:
+            # Ensure commas at end of lines
+            clean_lines.append(", ".join(words)+",")
+        else:
+            clean_lines.append("")
+    prompt = "\n".join(clean_lines).strip()
+
+    # Limit to 2 consecutive newlines
+    while "\n\n\n" in prompt:
+        prompt = prompt.replace("\n\n\n", "\n\n")
 
     return prompt
 
