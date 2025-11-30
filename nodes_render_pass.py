@@ -106,6 +106,13 @@ class RenderPass:
         # Apply the checkpoint's associated +/- prompts.
         prompt_pos, prompt_neg = apply_checkpoint_prompt(prompt_pos, prompt_neg, ckpt_config)
 
+        # Extract contents of <face> tags.
+        # NOTE: This should be done before handling <neg> tags, so that it's 
+        # possible to send face negative prompts through by stacking exactly like so:
+        # <face><neg>glowing eyes</neg></face>
+        prompt_pos, face_pos = extract_face_prompts(prompt_pos)
+        prompt_neg, face_neg = extract_face_prompts(prompt_neg)
+
         # Remove contents of tags which are marked for removal using exclamation mark syntax: <!tag>
         # Useful when a prompt wants to signify that it's not compatible with something.
         # Eg., to easily prompt a blink, mark descriptions of <eye>eyes</eye>, then use "blink <!eye>" in prompt.
@@ -113,17 +120,15 @@ class RenderPass:
         # keyword before it has a chance to trigger.
         prompt_pos = remove_excluded_tags(prompt_pos)
 
-        prompt_pos, face_pos = extract_face_prompts(prompt_pos)
-        prompt_neg, face_neg = extract_face_prompts(prompt_neg)
-
         if is_prompt_additive and pass_index != 1:
             prev_pos, prev_neg = data.get("prompt_pos", ""), data.get("prompt_neg", "")
-            prev_face_pos, prev_face_neg = data.get("prompt_face_pos", ""), data.get("prompt_face_neg", "")
             if prev_pos:
                 prompt_pos += ",\n"+prev_pos
+                prev_face_pos = data.get("prompt_face_pos", "")
                 face_pos += ",\n"+prev_face_pos
             if prev_neg:
                 prompt_neg += ",\n"+prev_neg
+                prev_face_neg = data.get("prompt_face_neg", "")
                 face_neg += ",\n"+prev_face_neg
 
         # Store the prompt in its current state of processing to be sent on to subsequent render passes.
@@ -139,8 +144,8 @@ class RenderPass:
         # Move contents of <!> tags to beginning of prompt.
         prompt_pos = reorder_prompt(prompt_pos)
 
-        prompt_pos = remove_all_tag_syntax(tidy_prompt(prompt_pos))
-        prompt_neg = remove_all_tag_syntax(tidy_prompt(prompt_neg))
+        prompt_pos = remove_all_tag_syntax(prompt_pos)
+        prompt_neg = remove_all_tag_syntax(prompt_neg)
 
         # Scale image, if requested.
         if scale != 1.0:
@@ -209,6 +214,11 @@ class RenderPass_Face:
 
         prompt_pos += ", "+data.get("prompt_face_pos", "")
         prompt_neg += ", "+data.get("prompt_face_neg", "")
+
+        # Move contents of <neg> tags to negative prompt, 
+        # and remove exact matches of negative prompt words from the positive prompt.
+        prompt_pos, prompt_neg = move_neg_tags(prompt_pos, prompt_neg)
+
         prompt_pos = remove_all_tag_syntax(tidy_prompt(prompt_pos))
         prompt_neg = remove_all_tag_syntax(tidy_prompt(prompt_neg))
 
@@ -246,12 +256,24 @@ def move_neg_tags(positive: str, negative: str) -> tuple[str, str]:
     # Extract negative tags.
     positive, neg_tag_contents = extract_tag_from_text(positive, NEG_TAG, remove_content=True)
     negative += ", " + neg_tag_contents
-    for neg_word in negative.split(","):
-        neg_word = neg_word.strip()
-        if not neg_word:
-            continue
-        if neg_word in positive:
-            positive = re.sub(rf"(,\s*|^)\(?{neg_word}(:?.*\))?", ", ", positive)
+    
+    lines = positive.split("\n")
+    new_lines = []
+    for line in lines:
+        words = [word.strip() for word in line.split(",")]
+        for neg_word in negative.split(","):
+            neg_word = neg_word.strip()
+            if not neg_word:
+                continue
+            if neg_word in words:
+                words.remove(neg_word)
+        if words:
+            new_lines.append(", ".join(words))
+        else:
+            new_lines.append("")
+
+    positive = "\n".join(new_lines)
+
     return positive, negative
 
 def override_width_height(prompt, image: Tensor) -> tuple[str, Tensor]:
@@ -265,7 +287,7 @@ def override_width_height(prompt, image: Tensor) -> tuple[str, Tensor]:
     elif FORCE_LANDSCAPE in prompt and width==short:
         return prompt.replace(FORCE_LANDSCAPE, ""), image.permute(0, 2, 1, 3).contiguous()
     elif FORCE_SQUARE in prompt:
-        average = int(long+short/2)
+        average = int((long+short)/2)
         return prompt.replace(FORCE_SQUARE, ""), EmptyImage().generate(average, average)[0]
     return prompt, image
 
