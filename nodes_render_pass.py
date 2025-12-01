@@ -340,7 +340,8 @@ def remove_all_tag_syntax(prompt: str) -> str:
 def extract_face_prompts(prompt: str) -> tuple[str, str]:
     # Extract contents of <face> tags to send on to the FaceDetailer.
     cleaned_prompt, face_prompt = extract_tag_from_text(prompt, FACE_TAG)
-    return cleaned_prompt, face_prompt
+    cleaned_prompt, eyedir_prompt = extract_tag_from_text(cleaned_prompt, "eyedir")
+    return cleaned_prompt, ",".join([face_prompt, eyedir_prompt])
 
 def render(checkpoint_config: CheckpointConfig, prompt_pos, prompt_neg, start_image=None, noise_seed=0, noise_strength=1.0, pass_index=1, lora_data: dict[str, float]={}):
     steps = checkpoint_config.steps
@@ -412,37 +413,36 @@ def ensure_required_loras(prompt: str, lora_configs: dict[str, LoRAConfig], api_
     # Extract lora tags.
     prompt_clean, lora_tags = extract_lora_tags(prompt)
 
-    founds = re.findall(RE_LORA_TAGS, prompt)
+    tags = re.findall(RE_LORA_TAGS, prompt)
     lora_files = folder_paths.get_filename_list("loras")
 
     lora_weights = {}
     any_downloaded = False
-    for f in founds:
-        tag = f[1:-1]
+    for full_tag in tags:
+        tag = full_tag[1:-1]
         pak = tag.split(":")
-        type = pak[0]
+        type = pak[0].strip()
         if type != 'lora':
             continue
         name = None
         if len(pak) > 1 and len(pak[1]) > 0:
-            name = pak[1]
+            name = pak[1].strip()
+            name = Path(name).stem
         else:
-            continue
-        weight = _clip_weight = 0
-        try:
-            if len(pak) > 2 and len(pak[2]) > 0:
-                weight = float(pak[2])
-                _clip_weight = weight
-            if len(pak) > 3 and len(pak[3]) > 0:
-                _clip_weight = float(pak[3])
-        except ValueError:
-            continue
-        if weight == 0:
             continue
         if name == None:
             continue
+        weight = _clip_weight = 0
+        if len(pak) > 2 and len(pak[2]) > 0:
+            try:
+                weight = float(pak[2].strip())
+                _clip_weight = weight
+            except ValueError:
+                continue
+        if weight == 0:
+            continue
         for lora_file in lora_files:
-            if Path(lora_file).name.startswith(name) or lora_file.startswith(name):
+            if Path(lora_file).stem.lower() == name.lower() or lora_file.startswith(name):
                 lora_weights[lora_file] = weight
                 break
         else:
