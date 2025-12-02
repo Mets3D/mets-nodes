@@ -103,9 +103,6 @@ class RenderPass:
         if image == None:
             image = EmptyImage().generate(1024, 1024)[0]
 
-        # Apply the checkpoint's associated +/- prompts.
-        prompt_pos, prompt_neg = apply_checkpoint_prompt(prompt_pos, prompt_neg, ckpt_config)
-
         # Extract contents of <face> tags.
         # NOTE: This should be done before handling <neg> tags, so that it's 
         # possible to send face negative prompts through by stacking exactly like so:
@@ -132,10 +129,15 @@ class RenderPass:
                 face_neg += ",\n"+prev_face_neg
 
         # Store the prompt in its current state of processing to be sent on to subsequent render passes.
+        # NOTE: This should happen BEFORE applying checkpoint prompt, since we don't want to send the checkpoint's prompt to the next render pass.
         data["prompt_pos"] = prompt_pos
         data["prompt_neg"] = prompt_neg
         data["prompt_face_pos"] = face_pos
         data["prompt_face_neg"] = face_neg
+
+        # Apply the checkpoint's associated +/- prompts.
+        # NOTE: This should happen AFTER storing the prompt, since we don't want to send the checkpoint's prompt to the next render pass.
+        prompt_pos, prompt_neg = apply_checkpoint_prompt(prompt_pos, prompt_neg, ckpt_config)
 
         # Move contents of <neg> tags to negative prompt, 
         # and remove exact matches of negative prompt words from the positive prompt.
@@ -157,13 +159,22 @@ class RenderPass:
 
         prompt_pos, lora_data = ensure_required_loras(prompt_pos, lora_data, api_token)
 
-        model, vae, clip, final_image = render(ckpt_config, prompt_pos, prompt_neg, image, noise_seed, noise, pass_index=pass_index, lora_data=lora_data)
+        model, vae, clip, final_image, last_latent, pos_encoded, neg_encoded = render(ckpt_config, prompt_pos, prompt_neg, image, noise_seed, noise, pass_index=pass_index, lora_data=lora_data)
         data['last_image'] = final_image
         data['last_model'] = model
         data['last_vae'] = vae
         data['last_clip'] = clip
         data['last_checkpoint_config'] = ckpt_config
-        return (data, final_image, tidy_prompt(prompt_pos), tidy_prompt(prompt_neg))
+        data['pos_encoded'] = pos_encoded
+        data['neg_encoded'] = neg_encoded
+        data['last_latent'] = last_latent
+
+        # Store final prompt separately, only used for Split Data node.
+        prompt_pos = tidy_prompt(prompt_pos)
+        prompt_neg = tidy_prompt(prompt_neg)
+        data["prompt_pos_final"] = prompt_pos
+        data["prompt_neg_final"] = prompt_neg
+        return (data, final_image, prompt_pos, prompt_neg)
 
 class RenderPass_Face:
     NAME = "Face Render Pass"
@@ -389,7 +400,7 @@ def render(checkpoint_config: CheckpointConfig, prompt_pos, prompt_neg, start_im
 
     out_image = VAEDecode().decode(vae, out_latent)[0]
 
-    return model, vae, clip, out_image
+    return model, vae, clip, out_image, out_latent, pos_encoded, neg_encoded
 
 def hash_from_dict(d: dict) -> str:
     # Convert dict to a canonical JSON string (sorted keys ensure determinism)
@@ -488,3 +499,48 @@ class RenderPass_Prepare:
             'prompt_seed': prompt_seed
         }
         return (combined_data, )
+
+class SplitData:
+    NAME = "Split Data"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "optional": {
+                "data": ("RENDER_PASS_DATA", {"tooltip": "Various data collected, to be used by a render pass."}),
+            },
+        }
+
+    RETURN_NAMES = ("Prompt_Pos", "Prompt_Neg", "Prompt_Face_Pos", "Prompt_Face_Neg", "Image", "Latent", "Model",      "Vae", "Clip", "Positive",     "Negative",      "Tag_Stack", "Checkpoint_Datas", "LoRA_Datas", "Prompt_Seed", "Noise_Seed", "Steps", "CFG", "Sampler",                        "Scheduler")
+    RETURN_TYPES = ("STRING",     "STRING",     "STRING",          "STRING",          "IMAGE", "LATENT", "MODEL",      "VAE", "CLIP", "CONDITIONING", "CONDITIONING", "TAG_STACK", "CHECKPOINT_DATAS", "LORA_DATA",  "INT",         "INT",        "INT",   "FLOAT", comfy.samplers.KSampler.SAMPLERS, comfy.samplers.KSampler.SCHEDULERS)
+    FUNCTION = "split_data"
+    CATEGORY = "Met's Nodes/Render Pass"
+    DESCRIPTION="""Split the data socket of a Render Pass node, for custom processing."""
+    OUTPUT_NODE = True
+
+    def split_data(self, data):
+        prompt_pos = data.get("prompt_pos_final", "")
+        prompt_neg = data.get("prompt_neg_final", "")
+        prompt_face_pos = data.get("prompt_face_pos", "")
+        prompt_face_neg = data.get("prompt_face_neg", "")
+        image = data.get("last_image", None)
+        model = data.get("last_model", None)
+        vae = data.get("last_vae", None)
+        clip = data.get("last_clip", None)
+        prompt_seed = data.get("prompt_seed", 1)
+        noise_seed = data.get("noise_seed", 1)
+        tag_stack = data.get("tag_stack", {})
+        checkpoint_datas = data.get("checkpoint_datas", {})
+        lora_data = data.get("lora_datas", {})
+
+        pos_encoded = data.get('pos_encoded', None)
+        neg_encoded = data.get('neg_encoded', None)
+        latent = data.get('last_latent', None)
+
+        checkpoint_cfg = data.get("last_checkpoint_config")
+        steps = checkpoint_cfg.steps
+        cfg = checkpoint_cfg.cfg
+        sampler_name = checkpoint_cfg.sampler
+        scheduler = checkpoint_cfg.scheduler
+
+        return (prompt_pos, prompt_neg, prompt_face_pos, prompt_face_neg, image, latent, model, vae, clip, pos_encoded, neg_encoded, tag_stack, checkpoint_datas, lora_data, prompt_seed, noise_seed, steps, cfg, sampler_name, scheduler)
