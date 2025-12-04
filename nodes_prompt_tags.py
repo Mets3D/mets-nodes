@@ -49,8 +49,8 @@ class ExtractTagFromString:
         "Put <neg>bad quality</neg> into your prompt, and then use this node to extract it and feed it to your negative prompt.\n"
         "Or use <face>blue eyes</face> to feed that into your face detailer. In this case, you would use preserve_tag_content."
     )
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("clean_text", "tag_content")
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("without_tags", "without_tag_contents", "tag_content")
     FUNCTION = "extract"
     CATEGORY = "Met's Nodes/Prompt Tags"
 
@@ -65,33 +65,35 @@ class ExtractTagFromString:
         }
 
     def extract(self, text: str, tag: str, preserve_tag_content: bool = False) -> Tuple[str, str]:
-        clean_text, content = extract_tag_from_text(text, tag, remove_content=(not preserve_tag_content))
-        return clean_text.strip(), content
+        without_tags, without_content, content = extract_tag_from_text(text, tag)
+        text = without_tags if preserve_tag_content else without_content
+        return text.strip(), content
 
-def extract_tag_from_text(
-    text: str,
-    tag: str,
-    remove_content: bool = False
-) -> Tuple[str, str]:
+def extract_tag_from_text(text: str, tag: str) -> tuple[str, str, str]:
     """
-    Removes <tag>...</tag> blocks from `text`.
-    
-    - Always removes the <tag> and </tag> markers.
-    - If remove_content=True, also removes the content inside the tags from clean_text.
-    - Always returns the tag contents as a comma-joined string.
+    Removes <tag>...</tag> blocks from `text`. Returns:
+    - Input text with only the tags themselves removed, but not the content inside the tags.
+    - Input text with the tags and their contents removed
+    - The contents of the tags (comma-joined)
     """
-    pattern = fr"<{tag}>(.*?)<\/{tag}>"
-    matches = re.findall(pattern, text, re.DOTALL)
-    tag_content = ", ".join(m.strip() for m in matches if m.strip())
+    open_tag = f"<{tag}>"
+    close_tag = f"</{tag}>"
 
-    if remove_content:
-        # Remove entire <tag>...</tag>
-        clean_text = re.sub(pattern, "", text, flags=re.DOTALL)
-    else:
-        # Replace with inner content only (strip tags)
-        clean_text = re.sub(pattern, lambda m: m.group(1), text, flags=re.DOTALL)
+    contents = []
+    without_contents = text
 
-    return tidy_prompt(clean_text), tag_content
+    # Extract tag contents.
+    while close_tag in without_contents:
+        before, after = without_contents.split(close_tag, 1)
+        outside, inside = before.rsplit(open_tag, 1)
+        contents.append(inside)
+        without_contents = outside+","+after
+
+    pattern = fr"<[/|!]?{tag}>"
+    without_tags = re.sub(pattern, ",", text, flags=re.DOTALL)
+    without_contents = re.sub(pattern, ",", without_contents, flags=re.DOTALL)
+
+    return tidy_prompt(without_tags), tidy_prompt(without_contents), tidy_prompt(",".join(contents))
 
 class AutoExtractTags:
     NAME="Auto Extract Tags From String"

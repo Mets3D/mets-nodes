@@ -22,17 +22,16 @@ from torch import Tensor
 
 NEG_TAG = "neg"
 FACE_TAG = "face"
+EYEDIR_TAG = "eyedir"
 TOP_TAG = "!"
 FORCE_NO_CP_PROMPT = "<!modelprompt>"
 FORCE_PORTRAIT = "<ratio:portrait>"
 FORCE_LANDSCAPE = "<ratio:landscape>"
 FORCE_SQUARE = "<ratio:square>"
-CONTEXT_PREFIX = "context_"
 
 # NOTE: BE CAREFUL WITH REGEX!! Complex Regular Expressions on complex prompts can turn 
 # into what's known as a Runaway Regex, and require near-infinite calculation!
 # KEEP THESE SIMPLE, and then do simple string operations.
-RE_CONTEXT_TAGS = re.compile(rf"(?s)<{CONTEXT_PREFIX}.*?>.*?<\/{CONTEXT_PREFIX}.*?>")
 RE_TAG_NAMES = re.compile(r"<\/((?:\w|\s|!)+)>")
 RE_EXCLUDE = re.compile(r"<!((?:\w|\s)+)>")
 RE_LORA = re.compile(r"<lora.*?>")
@@ -241,8 +240,8 @@ class RenderPass_Face:
         # and remove exact matches of negative prompt words from the positive prompt.
         prompt_pos, prompt_neg = move_neg_tags(prompt_pos, prompt_neg)
 
-        prompt_pos = remove_all_tag_syntax(tidy_prompt(prompt_pos))
-        prompt_neg = remove_all_tag_syntax(tidy_prompt(prompt_neg))
+        prompt_pos = remove_excluded_tags(remove_all_tag_syntax(tidy_prompt(prompt_pos)))
+        prompt_neg = remove_excluded_tags(remove_all_tag_syntax(tidy_prompt(prompt_neg)))
 
         # Save final prompt for potential Split Data node.
         data["prompt_pos_final"] = prompt_pos
@@ -291,9 +290,9 @@ def unroll_tag_stack(prompt: str, tag_stack: dict[str, str]) -> str:
 def move_neg_tags(positive: str, negative: str) -> tuple[str, str]:
     """We support <neg>Moving this from positive to negative prompt</neg> and also excluding negative keywords from the positive prompt."""
     # Extract negative tags.
-    positive, neg_tag_contents = extract_tag_from_text(positive, NEG_TAG, remove_content=True)
+    _, positive, neg_tag_contents = extract_tag_from_text(positive, NEG_TAG)
     negative += ", " + neg_tag_contents
-    
+
     lines = positive.split("\n")
     new_lines = []
     for line in lines:
@@ -355,7 +354,7 @@ def extract_lora_tags(prompt: str) -> tuple[str, list[str]]:
     return RE_LORA.sub("", prompt), RE_LORA.findall(prompt)
 
 def reorder_prompt(prompt: str) -> str:
-    prompt_pos, tag_content = extract_tag_from_text(prompt, TOP_TAG, remove_content=True)
+    _, prompt_pos, tag_content = extract_tag_from_text(prompt, TOP_TAG)
     return ", ".join([tag_content, prompt_pos])
 
 def remove_excluded_tags(prompt: str) -> str:
@@ -367,7 +366,7 @@ def remove_excluded_tags(prompt: str) -> str:
 
     for exclude_tag in tags_marked_for_exclude:
         # Extract tag content and remove the tags themselves, no matter what.
-        prompt, _discard = extract_tag_from_text(prompt, exclude_tag, remove_content=True)
+        _, prompt, _ = extract_tag_from_text(prompt, exclude_tag)
 
     return prompt
 
@@ -378,14 +377,14 @@ def remove_all_tag_syntax(prompt: str) -> str:
 
     for tag in all_tag_names:
         # Remove the tags themselves, no matter what.
-        prompt, content = extract_tag_from_text(prompt, tag, remove_content=False)
+        prompt = extract_tag_from_text(prompt, tag)[0]
 
     return prompt
 
 def extract_face_prompts(prompt: str) -> tuple[str, str]:
     # Extract contents of <face> tags to send on to the FaceDetailer.
-    cleaned_prompt, face_prompt = extract_tag_from_text(prompt, FACE_TAG)
-    cleaned_prompt, eyedir_prompt = extract_tag_from_text(cleaned_prompt, "eyedir")
+    cleaned_prompt, _, eyedir_prompt = extract_tag_from_text(prompt, EYEDIR_TAG)
+    cleaned_prompt, _, face_prompt = extract_tag_from_text(cleaned_prompt, FACE_TAG)
     return cleaned_prompt, ",".join([face_prompt, eyedir_prompt])
 
 ### Render functions ###
