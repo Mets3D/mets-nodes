@@ -14,7 +14,8 @@ from nodes import (
     CLIPTextEncode, CLIPSetLastLayer, 
     VAEEncode, VAEDecode, 
     EmptyImage, EmptyLatentImage, 
-    ImageScaleBy, NODE_CLASS_MAPPINGS
+    ImageScaleBy, NODE_CLASS_MAPPINGS,
+    PreviewImage, 
 )
 
 from torch import Tensor
@@ -28,7 +29,8 @@ FORCE_LANDSCAPE = "<ratio:landscape>"
 FORCE_SQUARE = "<ratio:square>"
 CONTEXT_PREFIX = "context_"
 
-# NOTE: BE CAREFUL WITH REGEX!! Complex Regular Expressions on complex prompts can turn into what's known as a Runaway Regex, and require near-infinite calculation!
+# NOTE: BE CAREFUL WITH REGEX!! Complex Regular Expressions on complex prompts can turn 
+# into what's known as a Runaway Regex, and require near-infinite calculation!
 # KEEP THESE SIMPLE, and then do simple string operations.
 RE_CONTEXT_TAGS = re.compile(rf"(?s)<{CONTEXT_PREFIX}.*?>.*?<\/{CONTEXT_PREFIX}.*?>")
 RE_TAG_NAMES = re.compile(r"<\/((?:\w|\s|!)+)>")
@@ -37,13 +39,9 @@ RE_LORA = re.compile(r"<lora.*?>")
 
 MODEL_CACHE = OrderedDict() # filepath : loaded model, max 5 to avoid unnecessary re-loading but not overwhelm memory.
 
-# TODO: 
-# - Rename Metxyz classes to have better names, eg. CheckpointConfig->CheckpointConfig, PrepareCheckpoint->ConfigureCheckpoint
-# - Add prompt processing to RenderPass node
-
 RE_LORA_TAGS = re.compile(r"<lora:.*?>")
 
-class RenderPass:
+class RenderPass(PreviewImage):
     NAME = "Render Pass"
     @classmethod
     def INPUT_TYPES(cls):
@@ -58,16 +56,20 @@ class RenderPass:
                 "prompt_neg": ("STRING", {"multiline": False, "tooltip": "The base negative prompt."}),
                 "is_prompt_additive": ("BOOLEAN", {"tooltip": "Whether this prompt should be added onto any prompt information already contained in the data input. If not, it will replace the prompt instead.", "default": True}),
             },
+            "hidden": {
+                "prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"
+            },
         }
 
     RETURN_NAMES = ("Data", "Image", "Prompt_Pos", "Prompt_Neg")
     RETURN_TYPES = ("RENDER_PASS_DATA","IMAGE", "STRING", "STRING")
+
     FUNCTION = "render_pass_execute"
     CATEGORY = "Met's Nodes/Render Pass"
     DESCRIPTION="""Render an image with the data provided."""
     OUTPUT_NODE = True
 
-    def render_pass_execute(self, data, checkpoint_name, noise, image=None, scale=1.0, prompt_pos="", prompt_neg="", is_prompt_additive=True):
+    def render_pass_execute(self, data, checkpoint_name, noise, image=None, scale=1.0, prompt_pos="", prompt_neg="", is_prompt_additive=True, prompt=None, extra_pnginfo=None):
         # We want to make a copy of the passed data, otherwise Comfy might send us back 
         # the dict that we modified in a previous run (eg. if it was a failed run)
         data = data.copy()
@@ -97,7 +99,6 @@ class RenderPass:
 
         # Apply aspect ratio override. (<ratio:portrait/landscape/square>)
         # This feature may discard or rotate the image, and is meant to be used with a blank input image.
-        ret = override_width_height(prompt_pos, image)
         prompt_pos, image = override_width_height(prompt_pos, image)
 
         if image == None:
@@ -174,7 +175,16 @@ class RenderPass:
         prompt_neg = tidy_prompt(prompt_neg)
         data["prompt_pos_final"] = prompt_pos
         data["prompt_neg_final"] = prompt_neg
-        return (data, final_image, prompt_pos, prompt_neg)
+
+        # Get image preview data (for this, since this is also a sampler node, ComfyUIManager's preview has to be disabled, since it overrides this.)
+        res = super().save_images(final_image, filename_prefix="RenderPass-", prompt=prompt, extra_pnginfo=extra_pnginfo)
+        ui_image = res['ui']['images']
+
+        # Return preview data + node outputs
+        return {
+            "ui": {"images": ui_image},
+            "result": (data, final_image, prompt_pos, prompt_neg),
+        }
 
 class RenderPass_Face:
     NAME = "Face Render Pass"
