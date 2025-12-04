@@ -41,7 +41,7 @@ MODEL_CACHE = OrderedDict() # filepath : loaded model, max 5 to avoid unnecessar
 
 RE_LORA_TAGS = re.compile(r"<lora:.*?>")
 
-class RenderPass(PreviewImage):
+class RenderPass:
     NAME = "Render Pass"
     @classmethod
     def INPUT_TYPES(cls):
@@ -56,9 +56,6 @@ class RenderPass(PreviewImage):
                 "prompt_neg": ("STRING", {"multiline": False, "tooltip": "The base negative prompt."}),
                 "is_prompt_additive": ("BOOLEAN", {"tooltip": "Whether this prompt should be added onto any prompt information already contained in the data input. If not, it will replace the prompt instead.", "default": True}),
             },
-            "hidden": {
-                "prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"
-            },
         }
 
     RETURN_NAMES = ("Data", "Image", "Prompt_Pos", "Prompt_Neg")
@@ -69,7 +66,7 @@ class RenderPass(PreviewImage):
     DESCRIPTION="""Render an image with the data provided."""
     OUTPUT_NODE = True
 
-    def render_pass_execute(self, data, checkpoint_name, noise, image=None, scale=1.0, prompt_pos="", prompt_neg="", is_prompt_additive=True, prompt=None, extra_pnginfo=None):
+    def render_pass_execute(self, data, checkpoint_name, noise, image=None, scale=1.0, prompt_pos="", prompt_neg="", is_prompt_additive=True):
         # We want to make a copy of the passed data, otherwise Comfy might send us back 
         # the dict that we modified in a previous run (eg. if it was a failed run)
         data = data.copy()
@@ -155,12 +152,19 @@ class RenderPass(PreviewImage):
             upscale_method = 'area' if scale < 1.0 else 'lanczos'
             image = ImageScaleBy().upscale(image, upscale_method, scale)[0]
 
+        # This is probably the best moment to save the prompt that will appear on CivitAI:
+        # Lora tags are still in there, but all our custom syntax has been handled.
+        data["prompt_pos_final"] = tidy_prompt(prompt_pos)
+        data["prompt_neg_final"] = tidy_prompt(prompt_neg)
+
+        # Load and remove LoRA tags.
         api_token = data.get("civitai_api_key", "")
         lora_data = data.get("lora_datas", {})
-
         prompt_pos, lora_data = ensure_required_loras(prompt_pos, lora_data, api_token)
 
+        # Render the image.
         model, vae, clip, final_image, last_latent, pos_encoded, neg_encoded = render(ckpt_config, prompt_pos, prompt_neg, image, noise_seed, noise, pass_index=pass_index, lora_data=lora_data)
+        # Store a bunch of data that can be accessed by Split Data node.
         data['last_image'] = final_image
         data['last_model'] = model
         data['last_vae'] = vae
@@ -169,21 +173,18 @@ class RenderPass(PreviewImage):
         data['pos_encoded'] = pos_encoded
         data['neg_encoded'] = neg_encoded
         data['last_latent'] = last_latent
-
-        # Store final prompt separately, only used for Split Data node.
-        prompt_pos = tidy_prompt(prompt_pos)
-        prompt_neg = tidy_prompt(prompt_neg)
-        data["prompt_pos_final"] = prompt_pos
-        data["prompt_neg_final"] = prompt_neg
+        if 'modelnames' not in data:
+            data['modelnames'] = set()
+        data['modelnames'].add(checkpoint_name)
 
         # Get image preview data (for this, since this is also a sampler node, ComfyUIManager's preview has to be disabled, since it overrides this.)
-        res = super().save_images(final_image, filename_prefix="RenderPass-", prompt=prompt, extra_pnginfo=extra_pnginfo)
+        res = PreviewImage().save_images(final_image, filename_prefix="RenderPass-")
         ui_image = res['ui']['images']
 
         # Return preview data + node outputs
         return {
             "ui": {"images": ui_image},
-            "result": (data, final_image, prompt_pos, prompt_neg),
+            "result": (data, final_image, data["prompt_pos_final"], data["prompt_neg_final"]),
         }
 
 class RenderPass_Face:
@@ -243,18 +244,33 @@ class RenderPass_Face:
         prompt_pos = remove_all_tag_syntax(tidy_prompt(prompt_pos))
         prompt_neg = remove_all_tag_syntax(tidy_prompt(prompt_neg))
 
+        # Save final prompt for potential Split Data node.
+        data["prompt_pos_final"] = prompt_pos
+        data["prompt_neg_final"] = prompt_neg
+
         clip_encoder = CLIPTextEncode()
         positive = clip_encoder.encode(clip, prompt_pos)[0]
         negative = clip_encoder.encode(clip, prompt_neg)[0]
 
         results = FaceDetailer().doit(
             image, model, clip, vae, guide_size=512, guide_size_for=True, max_size=1024, seed=seed, steps=steps, cfg=cfg, sampler_name=sampler_name, scheduler=scheduler,
-             positive=positive, negative=negative, denoise=noise, feather=5, noise_mask=True, force_inpaint=True,
-             bbox_threshold=0.5, bbox_dilation=10, bbox_crop_factor=3.0,
+             positive=positive, negative=negative, denoise=noise, feather=10, noise_mask=True, force_inpaint=True,
+             bbox_threshold=0.5, bbox_dilation=40, bbox_crop_factor=3.0,
              sam_detection_hint='center-1', sam_dilation=0, sam_threshold=0.93, sam_bbox_expansion=0, sam_mask_hint_threshold=0.7,
              sam_mask_hint_use_negative='False', drop_size=10, bbox_detector=bbox_detector, wildcard="", cycle=iterations,
         )
-        return (data, results[0], tidy_prompt(prompt_pos), tidy_prompt(prompt_neg))
+
+        image = results[0]
+
+        # Get image preview data (for this, since this is also a sampler node, ComfyUIManager's preview has to be disabled, since it overrides this.)
+        res = PreviewImage().save_images(image, filename_prefix="FaceRenderPass-")
+        ui_image = res['ui']['images']
+
+        # Return preview data + node outputs
+        return {
+            "ui": {"images": ui_image},
+            "result": (data, image, tidy_prompt(prompt_pos), tidy_prompt(prompt_neg)),
+        }
 
 ### String functions ###
 def unroll_tag_stack(prompt: str, tag_stack: dict[str, str]) -> str:
@@ -301,15 +317,23 @@ def override_width_height(prompt, image: Tensor) -> tuple[str, Tensor]:
     width, height = image.shape[2], image.shape[1]
     short = min(width, height)
     long = max(width, height)
-    if short==long:
-        return prompt, image
-    if FORCE_PORTRAIT in prompt and width==long:
-        return prompt.replace(FORCE_PORTRAIT, ""), image.permute(0, 2, 1, 3).contiguous()
-    elif FORCE_LANDSCAPE in prompt and width==short:
-        return prompt.replace(FORCE_LANDSCAPE, ""), image.permute(0, 2, 1, 3).contiguous()
-    elif FORCE_SQUARE in prompt:
-        average = int((long+short)/2)
-        return prompt.replace(FORCE_SQUARE, ""), EmptyImage().generate(average, average)[0]
+
+    if FORCE_PORTRAIT in prompt:
+        prompt = prompt.replace(FORCE_PORTRAIT, "")
+        if width==long:
+            image = image.permute(0, 2, 1, 3).contiguous()
+    
+    if FORCE_LANDSCAPE in prompt:
+        prompt = prompt.replace(FORCE_LANDSCAPE, "")
+        if width==short:
+            image = image.permute(0, 2, 1, 3).contiguous()
+
+    if FORCE_SQUARE in prompt:
+        prompt = prompt.replace(FORCE_SQUARE, "")
+        if short != long:
+            average = int((long+short)/2)
+            image = EmptyImage().generate(average, average)[0]
+
     return prompt, image
 
 def apply_checkpoint_prompt(prompt_pos: str, prompt_neg: str, checkpoint: CheckpointConfig) -> tuple[str, str]:
@@ -364,6 +388,7 @@ def extract_face_prompts(prompt: str) -> tuple[str, str]:
     cleaned_prompt, eyedir_prompt = extract_tag_from_text(cleaned_prompt, "eyedir")
     return cleaned_prompt, ",".join([face_prompt, eyedir_prompt])
 
+### Render functions ###
 def render(checkpoint_config: CheckpointConfig, prompt_pos, prompt_neg, start_image=None, noise_seed=0, noise_strength=1.0, pass_index=1, lora_data: dict[str, float]={}):
     steps = checkpoint_config.steps
     cfg = checkpoint_config.cfg
@@ -521,12 +546,11 @@ class SplitData:
             },
         }
 
-    RETURN_NAMES = ("Prompt_Pos", "Prompt_Neg", "Prompt_Face_Pos", "Prompt_Face_Neg", "Image", "Latent", "Model",      "Vae", "Clip", "Positive",     "Negative",      "Tag_Stack", "Checkpoint_Datas", "LoRA_Datas", "Prompt_Seed", "Noise_Seed", "Steps", "CFG", "Sampler",                        "Scheduler")
-    RETURN_TYPES = ("STRING",     "STRING",     "STRING",          "STRING",          "IMAGE", "LATENT", "MODEL",      "VAE", "CLIP", "CONDITIONING", "CONDITIONING", "TAG_STACK", "CHECKPOINT_DATAS", "LORA_DATA",  "INT",         "INT",        "INT",   "FLOAT", comfy.samplers.KSampler.SAMPLERS, comfy.samplers.KSampler.SCHEDULERS)
+    RETURN_NAMES = ("Prompt_Pos", "Prompt_Neg", "Prompt_Face_Pos", "Prompt_Face_Neg", "Image", "Latent", "Model_Names", "Model",      "Vae", "Clip", "Positive",     "Negative",      "Tag_Stack", "Checkpoint_Datas", "LoRA_Datas", "Prompt_Seed", "Noise_Seed", "Steps", "CFG", "Sampler",                        "Scheduler")
+    RETURN_TYPES = ("STRING",     "STRING",     "STRING",          "STRING",          "IMAGE", "LATENT", "STRING",      "MODEL",      "VAE", "CLIP", "CONDITIONING", "CONDITIONING", "TAG_STACK", "CHECKPOINT_DATAS", "LORA_DATA",  "INT",         "INT",        "INT",   "FLOAT", comfy.samplers.KSampler.SAMPLERS, comfy.samplers.KSampler.SCHEDULERS)
     FUNCTION = "split_data"
     CATEGORY = "Met's Nodes/Render Pass"
     DESCRIPTION="""Split the data socket of a Render Pass node, for custom processing."""
-    OUTPUT_NODE = True
 
     def split_data(self, data):
         prompt_pos = data.get("prompt_pos_final", "")
@@ -553,4 +577,6 @@ class SplitData:
         sampler_name = checkpoint_cfg.sampler
         scheduler = checkpoint_cfg.scheduler
 
-        return (prompt_pos, prompt_neg, prompt_face_pos, prompt_face_neg, image, latent, model, vae, clip, pos_encoded, neg_encoded, tag_stack, checkpoint_datas, lora_data, prompt_seed, noise_seed, steps, cfg, sampler_name, scheduler)
+        model_names = ",".join(list(data.get('modelnames')))
+
+        return (prompt_pos, prompt_neg, prompt_face_pos, prompt_face_neg, image, latent, model_names, model, vae, clip, pos_encoded, neg_encoded, tag_stack, checkpoint_datas, lora_data, prompt_seed, noise_seed, steps, cfg, sampler_name, scheduler)
