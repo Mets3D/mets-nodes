@@ -85,7 +85,12 @@ def extract_tag_from_text(text: str, tag: str) -> tuple[str, str, str]:
     # Extract tag contents.
     while close_tag in without_contents:
         before, after = without_contents.split(close_tag, 1)
-        outside, inside = before.rsplit(open_tag, 1)
+        split = before.rsplit(open_tag, 1)
+        if len(split) == 1:
+            outside, inside = split[0], ""
+            print(f"Missing opening {tag} tag:  {before}")
+        else:
+            outside, inside = split
         contents.append(inside)
         without_contents = outside+","+after
 
