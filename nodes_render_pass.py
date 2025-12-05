@@ -213,6 +213,7 @@ class RenderPass_Face:
             from impact.impact_pack import FaceDetailer
         except ModuleNotFoundError:
             raise Exception("FaceDetailer node must be installed (from Impact Pack).")
+        data = data.copy()
         model = data.get('last_model', None)
         vae = data.get('last_vae', None)
         clip = data.get('last_clip', None)
