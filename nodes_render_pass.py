@@ -76,6 +76,8 @@ class RenderPass:
         noise_seed = data.get("noise_seed", 1)
         pass_index = data.get("pass_index", 0) + 1
         data['pass_index'] = pass_index
+        prev_pos, prev_neg = data.get("prompt_pos", ""), data.get("prompt_neg", "")
+        prev_face_pos, prev_face_neg = data.get("prompt_face_pos", ""), data.get("prompt_face_neg", "")
 
         ckpt_config: CheckpointConfig|None = next((cp for path, cp in checkpoint_datas.items() if cp.path==checkpoint_name), None)
         if not ckpt_config:
@@ -100,6 +102,30 @@ class RenderPass:
         if image == None:
             image = EmptyImage().generate(1024, 1024)[0]
 
+        if is_prompt_additive and pass_index != 1:
+            if prev_pos:
+                prompt_pos += ",\n"+prev_pos
+            if prev_neg:
+                prompt_neg += ",\n"+prev_neg
+
+
+        # Store the prompt in its current state of processing to be sent on to subsequent render passes.
+        # NOTE: This should happen BEFORE applying checkpoint prompt, since we don't want to send the checkpoint's prompt to the next render pass.
+        data["prompt_pos"] = prompt_pos
+        data["prompt_neg"] = prompt_neg
+
+        # Apply the checkpoint's associated +/- prompts.
+        # NOTE: This should happen AFTER storing the prompt, since we don't want to send the checkpoint's prompt to the next render pass.
+        prompt_pos, prompt_neg = apply_checkpoint_prompt(prompt_pos, prompt_neg, ckpt_config)
+
+        # Remove contents of tags which are marked for removal using exclamation mark syntax: <!tag>
+        # Useful when a prompt wants to signify that it's not compatible with something.
+        # Eg., to easily prompt a blink, mark descriptions of <eye>eyes</eye>, then use "blink <!eye>" in prompt.
+        # NOTE: This must come AFTER apply_checkpoint_prompt(), otherwise it will remove the <!modelprompt>
+        # NOTE: This must come BEFORE extract_face_prompts(), otherwise tags like <!eye> or <!eyedir> move the face prompt, where they won't affect the main prompt.
+        # keyword before it has a chance to trigger.
+        prompt_pos = remove_excluded_tags(prompt_pos)
+
         # Extract contents of <face> tags.
         # NOTE: This should be done before handling <neg> tags, so that it's 
         # possible to send face negative prompts through by stacking exactly like so:
@@ -107,34 +133,14 @@ class RenderPass:
         prompt_pos, face_pos = extract_face_prompts(prompt_pos)
         prompt_neg, face_neg = extract_face_prompts(prompt_neg)
 
-        # Remove contents of tags which are marked for removal using exclamation mark syntax: <!tag>
-        # Useful when a prompt wants to signify that it's not compatible with something.
-        # Eg., to easily prompt a blink, mark descriptions of <eye>eyes</eye>, then use "blink <!eye>" in prompt.
-        # NOTE: This must come AFTER apply_checkpoint_prompt(), otherwise it will remove the <!modelprompt> 
-        # keyword before it has a chance to trigger.
-        prompt_pos = remove_excluded_tags(prompt_pos)
-
         if is_prompt_additive and pass_index != 1:
-            prev_pos, prev_neg = data.get("prompt_pos", ""), data.get("prompt_neg", "")
             if prev_pos:
-                prompt_pos += ",\n"+prev_pos
-                prev_face_pos = data.get("prompt_face_pos", "")
                 face_pos += ",\n"+prev_face_pos
             if prev_neg:
-                prompt_neg += ",\n"+prev_neg
-                prev_face_neg = data.get("prompt_face_neg", "")
                 face_neg += ",\n"+prev_face_neg
 
-        # Store the prompt in its current state of processing to be sent on to subsequent render passes.
-        # NOTE: This should happen BEFORE applying checkpoint prompt, since we don't want to send the checkpoint's prompt to the next render pass.
-        data["prompt_pos"] = prompt_pos
-        data["prompt_neg"] = prompt_neg
         data["prompt_face_pos"] = face_pos
         data["prompt_face_neg"] = face_neg
-
-        # Apply the checkpoint's associated +/- prompts.
-        # NOTE: This should happen AFTER storing the prompt, since we don't want to send the checkpoint's prompt to the next render pass.
-        prompt_pos, prompt_neg = apply_checkpoint_prompt(prompt_pos, prompt_neg, ckpt_config)
 
         # Move contents of <neg> tags to negative prompt, 
         # and remove exact matches of negative prompt words from the positive prompt.
