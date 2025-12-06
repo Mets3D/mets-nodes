@@ -32,7 +32,7 @@ FORCE_SQUARE = "<ratio:square>"
 # NOTE: BE CAREFUL WITH REGEX!! Complex Regular Expressions on complex prompts can turn 
 # into what's known as a Runaway Regex, and require near-infinite calculation!
 # KEEP THESE SIMPLE, and then do simple string operations.
-RE_TAG_NAMES = re.compile(r"<\/((?:\w|\s|!)+)>")
+RE_TAG_NAMES = re.compile(r"<((?:\w|\s|!)+)>")
 RE_EXCLUDE = re.compile(r"<!((?:\w|\s)+)>")
 RE_LORA = re.compile(r"<lora.*?>")
 
@@ -291,6 +291,11 @@ def unroll_tag_stack(prompt: str, tag_stack: dict[str, str]) -> str:
         for tag in tags_to_unroll:
             prompt = unroll_tag(prompt, tag)
         tags_to_unroll = present_tags(prompt)
+
+    tag_tweaks = tag_stack.get('__tag_tweaks', {})
+    for find, replace in tag_tweaks.items():
+        if find in prompt:
+            prompt = prompt.replace(find, replace)
 
     return tidy_prompt(prompt)
 

@@ -148,9 +148,9 @@ def test_brackets(prompt: str, tag="") -> bool:
 
 class TagTweaker:
     NAME = "Tag Tweaker"
-    DESCRIPTION = ("Search and replace among all value strings of the tag stack")
+    DESCRIPTION = ("Search and replace operation to be applied on the final prompt")
     RETURN_NAMES, RETURN_TYPES = map(list, zip(*{"Tag Stack": 'TAG_STACK'}.items()))
-    FUNCTION = "tweak_tags"
+    FUNCTION = "store_tag_tweak"
     CATEGORY = "Met's Nodes/Render Pass"
 
     @classmethod
@@ -163,9 +163,9 @@ class TagTweaker:
             }
         }
 
-    def tweak_tags(self, tag_stack={}, find="", replace=""):
-        for key, value in tag_stack.items():
-            if find in value:
-                tag_stack[key] = value.replace(find, replace)
+    def store_tag_tweak(self, tag_stack={}, find="", replace=""):
+        if '__tag_tweaks' not in tag_stack:
+            tag_stack['__tag_tweaks'] = {}
+        tag_stack['__tag_tweaks'][find] = replace
 
         return (tag_stack,)
