@@ -1,6 +1,9 @@
 import re, random
 from typing import Tuple
 
+RANDOM_PATTERN = re.compile(r'\{([^{}]*)\}')
+EXCLUDE_PATTERN = re.compile(r'~~([^~]*)~~')
+
 class RegexNode:
     NAME = "Regex Operations"
 
@@ -168,38 +171,66 @@ class StableRandomChoiceNode:
         randomized = randomize_prompt(prompt, seed)
         return (randomized, )
 
+
 def randomize_prompt(prompt, seed=0) -> str:
     """
     Process the input text, recursively replacing each {...|...} group
     with one option selected randomly and stably based on the seed.
 
+    Any words found between ~~squiggles~~ express an incompatibility; Any random options including those words will be ignored.
+    The prompt is evaluated left-to-right, so if a random option first lands on something containing ~~water~~, 
+    then no options further in the prompt including the word "water" will ever be selected.
+
     Args:
-        text (str): Input string with nested option groups.
+        prompt (str): Input string with nested option groups.
         seed (int): Base seed to control randomness and ensure reproducibility.
 
     Returns:
-        tuple(str): Processed string with all groups resolved.
+        str: Processed string with all groups resolved.
     """
     counter = 0  # Counts number of choices made so far, used in seed.
 
     pattern = re.compile(r'\{([^{}]*)\}')
-    def helper(t):
+    def helper(text):
         nonlocal counter
-        match = pattern.search(t)
+        match = pattern.search(text)
         if not match:
-            return t
+            return text
+
+        before = text[:match.start()]
+        after = text[match.end():]
+
+        exclusion_tags = EXCLUDE_PATTERN.findall(before)
+        exclusion_words = []
+        for tag in exclusion_tags:
+            exclusion_words += get_words(tag)
 
         options = match.group(1).split('|')
-        choice_seed = seed + counter
-        rand = random.Random(choice_seed)
-        choice = rand.choice(options)
+        for option in options[:]:
+            words = get_words(option)
+            if any([w in exclusion_words for w in words]):
+                options.remove(option)
+
+        if options:
+            choice_seed = seed + counter
+            rand = random.Random(choice_seed)
+            choice = rand.choice(options)
+        else:
+            choice = ""
+            if after.startswith("|"):
+                after = after[1:]
 
         counter += 1
-        t = t[:match.start()] + choice + t[match.end():]
-        return helper(t)
+        text = before + choice + after
+        return helper(text)
 
     prompt = helper(prompt)
+    prompt = re.sub(EXCLUDE_PATTERN, "", prompt)
     return tidy_prompt(prompt)
+
+def get_words(text: str):
+    return [w.strip().lower() for w in text.split(",")]
+
 
 class PromptTidy:
     NAME="Tidy Prompt"
