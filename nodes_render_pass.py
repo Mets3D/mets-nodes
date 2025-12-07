@@ -108,7 +108,6 @@ class RenderPass:
             if prev_neg:
                 prompt_neg += ",\n"+prev_neg
 
-
         # Store the prompt in its current state of processing to be sent on to subsequent render passes.
         # NOTE: This should happen BEFORE applying checkpoint prompt, since we don't want to send the checkpoint's prompt to the next render pass.
         data["prompt_pos"] = prompt_pos
@@ -132,12 +131,6 @@ class RenderPass:
         # <face><neg>glowing eyes</neg></face>
         prompt_pos, face_pos = extract_face_prompts(prompt_pos)
         prompt_neg, face_neg = extract_face_prompts(prompt_neg)
-
-        if is_prompt_additive and pass_index != 1:
-            if prev_pos:
-                face_pos += ",\n"+prev_face_pos
-            if prev_neg:
-                face_neg += ",\n"+prev_face_neg
 
         data["prompt_face_pos"] = face_pos
         data["prompt_face_neg"] = face_neg
@@ -303,7 +296,7 @@ def move_neg_tags(positive: str, negative: str) -> tuple[str, str]:
     """We support <neg>Moving this from positive to negative prompt</neg> and also excluding negative keywords from the positive prompt."""
     # Extract negative tags.
     _, positive, neg_tag_contents = extract_tag_from_text(positive, NEG_TAG)
-    negative += ", " + neg_tag_contents
+    negative = neg_tag_contents + ", " + negative
 
     lines = positive.split("\n")
     new_lines = []
