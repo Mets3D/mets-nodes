@@ -63,14 +63,11 @@ class ExtractTagFromString:
             "required": {
                 "text": ("STRING", {"multiline": True, "tooltip": "The string which will have tags removed from it."}),
                 "tag": ("STRING", {"multiline": False, "tooltip": "The specific tag to remove."}),
-                "preserve_tag_content": ("BOOLEAN", {"default": False, "tooltip": "Whether the contents of the tag should be included in the clean_text output."}),
             }
         }
 
-    def extract(self, text: str, tag: str, preserve_tag_content: bool = False) -> Tuple[str, str]:
-        without_tags, without_content, content = extract_tag_from_text(text, tag)
-        text = without_tags if preserve_tag_content else without_content
-        return text.strip(), content
+    def extract(self, text: str, tag: str) -> tuple[str, str, str]:
+        return extract_tag_from_text(text, tag)
 
 def extract_tag_from_text(text: str, tag: str) -> tuple[str, str, str]:
     """
@@ -270,7 +267,8 @@ def tidy_prompt(prompt: str) -> str:
     while "\n\n\n" in prompt:
         prompt = prompt.replace("\n\n\n", "\n\n")
 
-    return prompt
+    # Return without the final comma.
+    return prompt[:-1]
 
 def remove_comment_lines(prompt: str) -> str:
     return re.sub(r"#.*", "", prompt)

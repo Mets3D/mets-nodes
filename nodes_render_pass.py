@@ -90,6 +90,9 @@ class RenderPass:
         # NOTE: Currently not done for the negative prompt, I don't think it would be useful.
         prompt_pos = randomize_prompt(prompt_pos, prompt_seed)
 
+        data["prompt_pos_randomized"] = prompt_pos
+        data["prompt_neg_randomized"] = prompt_neg
+
         if image==None:
             image = data.get('last_image', None)
         if image==None:
@@ -550,8 +553,8 @@ class SplitData:
             },
         }
 
-    RETURN_NAMES = ("Prompt_Pos", "Prompt_Neg", "Prompt_Face_Pos", "Prompt_Face_Neg", "Image", "Latent", "Model_Names", "Model",      "Vae", "Clip", "Positive",     "Negative",      "Tag_Stack", "Checkpoint_Datas", "LoRA_Datas", "Prompt_Seed", "Noise_Seed", "Steps", "CFG", "Sampler",                        "Scheduler")
-    RETURN_TYPES = ("STRING",     "STRING",     "STRING",          "STRING",          "IMAGE", "LATENT", "STRING",      "MODEL",      "VAE", "CLIP", "CONDITIONING", "CONDITIONING", "TAG_STACK", "CHECKPOINT_DATAS", "LORA_DATA",  "INT",         "INT",        "INT",   "FLOAT", comfy.samplers.KSampler.SAMPLERS, comfy.samplers.KSampler.SCHEDULERS)
+    RETURN_NAMES = ("Prompt_Pos", "Prompt_Neg", "Prompt_Face_Pos", "Prompt_Face_Neg", "Prompt_Pos_Randomized", "Prompt_Neg_Randomized", "Image", "Latent", "Model_Names", "Model",      "Vae", "Clip", "Positive",     "Negative",      "Tag_Stack", "Checkpoint_Datas", "LoRA_Datas", "Prompt_Seed", "Noise_Seed", "Steps", "CFG", "Sampler",                        "Scheduler")
+    RETURN_TYPES = ("STRING",     "STRING",     "STRING",          "STRING",          "STRING",                "STRING",                "IMAGE", "LATENT", "STRING",      "MODEL",      "VAE", "CLIP", "CONDITIONING", "CONDITIONING", "TAG_STACK", "CHECKPOINT_DATAS", "LORA_DATA",  "INT",         "INT",        "INT",   "FLOAT", comfy.samplers.KSampler.SAMPLERS, comfy.samplers.KSampler.SCHEDULERS)
     FUNCTION = "split_data"
     CATEGORY = "Met's Nodes/Render Pass"
     DESCRIPTION="""Split the data socket of a Render Pass node, for custom processing."""
@@ -559,6 +562,8 @@ class SplitData:
     def split_data(self, data):
         prompt_pos = data.get("prompt_pos_final", "")
         prompt_neg = data.get("prompt_neg_final", "")
+        prompt_pos_randomized = data.get("prompt_pos_randomized", "")
+        prompt_neg_randomized = data.get("prompt_neg_randomized", "")
         prompt_face_pos = data.get("prompt_face_pos", "")
         prompt_face_neg = data.get("prompt_face_neg", "")
         image = data.get("last_image", None)
@@ -583,4 +588,4 @@ class SplitData:
 
         model_names = ",".join(list(data.get('modelnames')))
 
-        return (prompt_pos, prompt_neg, prompt_face_pos, prompt_face_neg, image, latent, model_names, model, vae, clip, pos_encoded, neg_encoded, tag_stack, checkpoint_datas, lora_data, prompt_seed, noise_seed, steps, cfg, sampler_name, scheduler)
+        return (prompt_pos, prompt_neg, prompt_face_pos, prompt_face_neg, prompt_pos_randomized, prompt_neg_randomized, image, latent, model_names, model, vae, clip, pos_encoded, neg_encoded, tag_stack, checkpoint_datas, lora_data, prompt_seed, noise_seed, steps, int(cfg), sampler_name, scheduler)
