@@ -24,7 +24,7 @@ class RegexNode:
     FUNCTION = "execute_regex"
     CATEGORY = "Met's Nodes/Prompt Tags"
 
-    def execute_regex(self, input_text, pattern, replace_with="", mode="search") -> Tuple[str]:
+    def execute_regex(self, input_text, pattern, replace_with="", mode="search") -> tuple[str]:
         try:
             if mode == "search":
                 match = re.search(pattern, input_text)
@@ -44,6 +44,8 @@ class RegexNode:
         except Exception as e:
             print(f"Non-Regex Error: {str(e)}")
             return ("",)
+
+        return ("",)
 
 class ExtractTagFromString:
     NAME = "Extract Tag From String"
@@ -132,19 +134,17 @@ def auto_extract_tags(text: str) -> tuple[str, str]:
     # Detect all tag names present
     all_tag_names = set(re.findall(r"<\/((?:\w|\s)+)>", text))
 
-    clean_text = text
+    without_tags = text
     tag_contents = []
     for tag in all_tag_names:
         do_remove_content = tag in tags_marked_for_removal
         # Extract tag content and remove the tags themselves, no matter what.
-        clean_text, content = extract_tag_from_text(
-            clean_text, tag, remove_content=do_remove_content
-        )
+        without_tags, without_content, content = extract_tag_from_text(without_tags, tag)
         # Remove tag content, only if it's marked for exclusion.
         if do_remove_content and content:
             tag_contents.append(content)
 
-    return clean_text.strip(), ", ".join(tag_contents)
+    return without_tags.strip(), ", ".join(tag_contents)
 
 class StableRandomChoiceNode:
     NAME="Random Choice"
