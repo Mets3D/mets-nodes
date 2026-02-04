@@ -15,7 +15,7 @@ from nodes import (
     VAEEncode, VAEDecode, 
     EmptyImage, EmptyLatentImage, 
     ImageScaleBy, NODE_CLASS_MAPPINGS,
-    PreviewImage, 
+    PreviewImage, CLIPLoader, VAELoader
 )
 
 from torch import Tensor
@@ -401,6 +401,12 @@ def render(checkpoint_config: CheckpointConfig, prompt_pos, prompt_neg, start_im
     cfg = checkpoint_config.cfg
     sampler_name = checkpoint_config.sampler
     scheduler = checkpoint_config.scheduler
+    if pass_index > 1 and 'ZIT' in checkpoint_config.path:
+        print("Applying 2nd pass hack...")
+        if sampler_name == 'res_multistep':
+            sampler_name = 'er_sde'
+        if scheduler == 'simple':
+            scheduler = 'sgm_uniform'
 
     global MODEL_CACHE
     start = time.time()
@@ -416,10 +422,14 @@ def render(checkpoint_config: CheckpointConfig, prompt_pos, prompt_neg, start_im
         MODEL_CACHE[checkpoint_config.path] = model, clip, vae
         if len(MODEL_CACHE) > 5:
             MODEL_CACHE.popitem(last=False)
-        print("Model load: ", time.time()-start)
+        # print("Model load: ", time.time()-start)
         start = time.time()
     model, clip = apply_loras(model, clip, lora_data)
-    print("LoRA load: ", time.time()-start)
+    if checkpoint_config.clip_name:
+        clip = CLIPLoader().load_clip(checkpoint_config.clip_name)[0]
+    if checkpoint_config.vae_name:
+        vae = VAELoader().load_vae(checkpoint_config.vae_name)[0]
+    # print("LoRA load: ", time.time()-start)
 
     clip_encoder = CLIPTextEncode()
     clip_skip = CLIPSetLastLayer()
@@ -427,7 +437,7 @@ def render(checkpoint_config: CheckpointConfig, prompt_pos, prompt_neg, start_im
     pos_encoded = clip_encoder.encode(clip, prompt_pos)[0]
     neg_encoded = clip_encoder.encode(clip, prompt_neg)[0]
 
-    if start_image == None:
+    if start_image is None:
         if pass_index > 1:
             raise Exception(f"No image for pass {pass_index}.")
         start_image = EmptyImage().generate(1024, 1024)[0]

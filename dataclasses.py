@@ -39,6 +39,8 @@ class CheckpointConfig(CivitAIModelConfigBase):
     cfg: float
     sampler: str
     scheduler: str = "normal"
+    clip_name: str = ""
+    vae_name: str = ""
     model_pos_prompt: str = ""
     model_neg_prompt: str = ""
     clip_skip: int = -2

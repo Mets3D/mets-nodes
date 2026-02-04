@@ -2,6 +2,7 @@ import os
 
 from .dataclasses import CheckpointConfig, LoRAConfig
 from .nodes_prompt_tags import remove_comment_lines
+import folder_paths
 
 import comfy.samplers
 
@@ -29,6 +30,7 @@ class PrepareCheckpoint:
                 "scheduler": (comfy.samplers.KSampler.SCHEDULERS, {"tooltip": "Scheduler"}),
                 "prompt_pos": ("STRING", {"multiline": True, "tooltip": "Base positive prompt associated with this checkpoint"}),
                 "prompt_neg": ("STRING", {"multiline": True, "tooltip": "Base negative prompt associated with this checkpoint"}),
+                "extra_data": ("EXTRA_CHECKPOINT_DATA", {"tooltip": "This socket can be used to specify the name of a Clip and a Vae for this model, using a 'Checkpoint Extra Data' node"}),
             },
         }
 
@@ -37,6 +39,7 @@ class PrepareCheckpoint:
         if path.startswith(os.sep):
             path = path[1:]
         checkpoint_datas = kwargs.get('checkpoint_datas', {})
+        extra_data = kwargs.get('extra_data', {})
         checkpoint_datas.update({path: CheckpointConfig(
             civitai_model_id=kwargs['civitai_id'],
             version=kwargs['version_name'],
@@ -48,8 +51,30 @@ class PrepareCheckpoint:
             scheduler=kwargs['scheduler'],
             model_pos_prompt=kwargs['prompt_pos'],
             model_neg_prompt=kwargs['prompt_neg'],
+            clip_name=extra_data.get('clip_name', ""),
+            vae_name=extra_data.get('vae_name', ""),
         )})
         return (checkpoint_datas,)
+
+class ExtraCheckpointData:
+    NAME = "Extra Checkpoint Data"
+    DESCRIPTION = ("Specify a custom Clip/Vae for a checkpoint.")
+    RETURN_NAMES, RETURN_TYPES = map(list, zip(*{"Checkpoint Data": 'EXTRA_CHECKPOINT_DATA'}.items()))
+    FUNCTION = "load_stuff"
+    CATEGORY = "Met's Nodes/Render Pass"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "optional": {
+                "clip_name": (folder_paths.get_filename_list("text_encoders"),),
+                "vae_name": (folder_paths.get_filename_list("vae"),),
+            }
+        }
+
+    def load_stuff(self, clip_name: str, vae_name: str):
+        return ({'clip_name': clip_name, 'vae_name': vae_name},)
+
 
 class PrepareLoRA:
     NAME = "Prepare LoRA"
