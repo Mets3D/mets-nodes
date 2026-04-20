@@ -164,7 +164,7 @@ class RenderPass:
         prompt_pos, lora_data = ensure_required_loras(prompt_pos, lora_data, api_token)
 
         # Render the image.
-        model, vae, clip, final_image, last_latent, pos_encoded, neg_encoded = render(ckpt_config, prompt_pos, prompt_neg, image, noise_seed, noise, pass_index=pass_index, lora_data=lora_data)
+        model, vae, clip, final_image, last_latent, pos_encoded, neg_encoded = render(data, ckpt_config, prompt_pos, prompt_neg, image, noise_seed, noise, pass_index=pass_index, lora_data=lora_data)
         # Store a bunch of data that can be accessed by Split Data node.
         data['last_image'] = final_image
         data['last_model'] = model
@@ -396,7 +396,7 @@ def extract_face_prompts(prompt: str) -> tuple[str, str]:
     return cleaned_prompt, ",".join([face_prompt, eyedir_prompt])
 
 ### Render functions ###
-def render(checkpoint_config: CheckpointConfig, prompt_pos, prompt_neg, start_image=None, noise_seed=0, noise_strength=1.0, pass_index=1, lora_data: dict[str, float]={}):
+def render(data, checkpoint_config: CheckpointConfig, prompt_pos, prompt_neg, start_image=None, noise_seed=0, noise_strength=1.0, pass_index=1, lora_data: dict[str, float]={}):
     steps = checkpoint_config.steps
     cfg = checkpoint_config.cfg
     sampler_name = checkpoint_config.sampler
@@ -410,26 +410,30 @@ def render(checkpoint_config: CheckpointConfig, prompt_pos, prompt_neg, start_im
 
     global MODEL_CACHE
     start = time.time()
-    if checkpoint_config.path in MODEL_CACHE and False:
-        # Optimization: If the checkpoint and LoRAs are the same as in 
-        # previous prompt, don't load the models again.
-        # NOTE: This results in memory leak console warnings, which seems fair... Sad, though.
-        model, clip, vae = MODEL_CACHE.get(checkpoint_config.path)
-    else:
-        # NOTE: We cannot download a missing model because the frontend will raise an error during input validation,
-        # which is very fucking frustrating.
-        model, clip, vae = CheckpointLoaderSimple().load_checkpoint(checkpoint_config.path)
-        MODEL_CACHE[checkpoint_config.path] = model, clip, vae
-        if len(MODEL_CACHE) > 5:
-            MODEL_CACHE.popitem(last=False)
-        # print("Model load: ", time.time()-start)
-        start = time.time()
-    model, clip = apply_loras(model, clip, lora_data)
-    if checkpoint_config.clip_name:
-        clip = CLIPLoader().load_clip(checkpoint_config.clip_name)[0]
-    if checkpoint_config.vae_name:
-        vae = VAELoader().load_vae(checkpoint_config.vae_name)[0]
-    # print("LoRA load: ", time.time()-start)
+    model = data.get("model")
+    clip = data.get("clip")
+    vae = data.get("vae")
+    if not model:
+        if checkpoint_config.path in MODEL_CACHE and False:
+            # Optimization: If the checkpoint and LoRAs are the same as in 
+            # previous prompt, don't load the models again.
+            # NOTE: This results in memory leak console warnings, which seems fair... Sad, though.
+            model, clip, vae = MODEL_CACHE.get(checkpoint_config.path)
+        else:
+            # NOTE: We cannot download a missing model because the frontend will raise an error during input validation,
+            # which is very fucking frustrating.
+            model, clip, vae = CheckpointLoaderSimple().load_checkpoint(checkpoint_config.path)
+            MODEL_CACHE[checkpoint_config.path] = model, clip, vae
+            if len(MODEL_CACHE) > 5:
+                MODEL_CACHE.popitem(last=False)
+            # print("Model load: ", time.time()-start)
+            start = time.time()
+        model, clip = apply_loras(model, clip, lora_data)
+        if checkpoint_config.clip_name:
+            clip = CLIPLoader().load_clip(checkpoint_config.clip_name)[0]
+        if checkpoint_config.vae_name:
+            vae = VAELoader().load_vae(checkpoint_config.vae_name)[0]
+        # print("LoRA load: ", time.time()-start)
 
     clip_encoder = CLIPTextEncode()
     clip_skip = CLIPSetLastLayer()
@@ -520,6 +524,69 @@ def ensure_required_loras(prompt: str, lora_configs: dict[str, LoRAConfig], api_
 
     return prompt_clean, lora_weights
 
+class MergeData:
+    NAME = "Merge Data"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "optional": {
+                "prompt_pos":             ("STRING",       {"multiline": False, "tooltip": "Final positive prompt."}),
+                "prompt_neg":             ("STRING",       {"multiline": False, "tooltip": "Final negative prompt."}),
+                "prompt_face_pos":        ("STRING",       {"multiline": False, "tooltip": "Face positive prompt."}),
+                "prompt_face_neg":        ("STRING",       {"multiline": False, "tooltip": "Face negative prompt."}),
+                "prompt_pos_randomized":  ("STRING",       {"multiline": False, "tooltip": "Randomized positive prompt."}),
+                "prompt_neg_randomized":  ("STRING",       {"multiline": False, "tooltip": "Randomized negative prompt."}),
+                "image":                  ("IMAGE",),
+                "latent":                 ("LATENT",),
+                "model_names":            ("STRING",       {"multiline": False, "tooltip": "Comma-separated checkpoint names."}),
+                "model":                  ("MODEL",),
+                "vae":                    ("VAE",),
+                "clip":                   ("CLIP",),
+                "positive":               ("CONDITIONING",),
+                "negative":               ("CONDITIONING",),
+                "tag_stack":              ("TAG_STACK",),
+                "checkpoint_datas":       ("CHECKPOINT_DATAS",),
+                "lora_datas":             ("LORA_DATA",),
+                "prompt_seed":            ("INT",          {"default": 0, "min": 0, "max": 2**64}),
+                "noise_seed":             ("INT",          {"default": 0, "min": 0, "max": 2**64}),
+            },
+        }
+
+    RETURN_NAMES = ("Data",)
+    RETURN_TYPES = ("RENDER_PASS_DATA",)
+    FUNCTION = "merge_data"
+    CATEGORY = "Met's Nodes/Render Pass"
+    DESCRIPTION = """Combine individual elements back into a render pass data structure. Inverse of Split Data."""
+
+    def merge_data(self, prompt_pos="", prompt_neg="", prompt_face_pos="", prompt_face_neg="",
+                   prompt_pos_randomized="", prompt_neg_randomized="", image=None, latent=None,
+                   model_names="", model=None, vae=None, clip=None, positive=None, negative=None,
+                   tag_stack={}, checkpoint_datas={}, lora_datas={}, prompt_seed=0, noise_seed=0):
+        data = {
+            "prompt_pos_final":      prompt_pos,
+            "prompt_neg_final":      prompt_neg,
+            "prompt_face_pos":       prompt_face_pos,
+            "prompt_face_neg":       prompt_face_neg,
+            "prompt_pos_randomized": prompt_pos_randomized,
+            "prompt_neg_randomized": prompt_neg_randomized,
+            "last_image":            image,
+            "last_latent":           latent,
+            "modelnames":            set(n.strip() for n in model_names.split(",") if n.strip()),
+            "last_model":            model,
+            "last_vae":              vae,
+            "last_clip":             clip,
+            "pos_encoded":           positive,
+            "neg_encoded":           negative,
+            "tag_stack":             tag_stack,
+            "checkpoint_datas":      checkpoint_datas,
+            "lora_datas":            lora_datas,
+            "prompt_seed":           prompt_seed,
+            "noise_seed":            noise_seed,
+        }
+        return (data,)
+
+
 class RenderPass_Prepare:
     NAME = "Prepare Render Pass"
     @classmethod
@@ -590,12 +657,18 @@ class SplitData:
         neg_encoded = data.get('neg_encoded', None)
         latent = data.get('last_latent', None)
 
+        steps=0
+        cfg=0
+        sampler_name=""
+        scheduler=""
         checkpoint_cfg = data.get("last_checkpoint_config")
-        steps = checkpoint_cfg.steps
-        cfg = checkpoint_cfg.cfg
-        sampler_name = checkpoint_cfg.sampler
-        scheduler = checkpoint_cfg.scheduler
+        if checkpoint_cfg:
+            steps = checkpoint_cfg.steps
+            cfg = checkpoint_cfg.cfg
+            sampler_name = checkpoint_cfg.sampler
+            scheduler = checkpoint_cfg.scheduler
 
-        model_names = ",".join(list(data.get('modelnames')))
+        model_names = data.get('modelnames', "")
+        model_names = ",".join(list(model_names))
 
         return (prompt_pos, prompt_neg, prompt_face_pos, prompt_face_neg, prompt_pos_randomized, prompt_neg_randomized, image, latent, model_names, model, vae, clip, pos_encoded, neg_encoded, tag_stack, checkpoint_datas, lora_data, prompt_seed, noise_seed, steps, int(cfg), sampler_name, scheduler)
