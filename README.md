@@ -1,6 +1,7 @@
-This node pack has two sets of nodes:
+This is my personal collection of nodes:
 - [Render Pass Nodes](#render-pass-nodes)
 - [WAN 2.2 Nodes](#wan-22-nodes)
+- [Misc Nodes](#misc-nodes)
 
 # Render Pass Nodes
 These nodes aim to enable workflows involving complex prompt randomization, and chaining the renders of multiple different checkpoints together.
@@ -56,15 +57,6 @@ Same as Prepare Checkpoint, but for LoRAs. You can activate LoRAs by adding them
 #### Adjust Image
 Simple Brightness/Contrast/Saturation adjuster. I highly recommend reducing all 3 between render steps, especially for night-time images.
 
-#### Misc Nodes
-The functionality of these nodes is built into the RenderPass node, but you can also use them outside of that framework, if you so wish.
-- **CivitAI Model Downloader**: I wasn't happy with the one that's online so I made my own. You can enter a model ID, your API key, a desired folder path, file name, and even model version name, and it will download it. Will automatically place checkpoints and LoRAs in the appropriate folders.
-- **Stable Random Choice**: I wasn't happy with how ComfyUI or WildCardProcessor handles randomized elements of a prompt, such as {red|green|blue}, particularly when a lot of such randomized elements were in a prompt. When you modify the prompt without adding or removing any randomized elements, you might get a totally different result. Not with this node. Only if you add or remove random elements.
-- **Tidy Prompt**: Adds commas at end of lines, removes lines starting with `#`, remove excess commas.
-- **Extract Tag From String**: Kinda like an HTML tag, eg. if the input string is `a girl with <eye>blue eyes</eye>`, this node will extract the `blue eyes` part if you ask it to extract the `eye` tag. Useful for not having to jump between so many different input boxes for prompts, since you can eg. use <neg>to send stuff to your negative prompt</neg> or <face>to send stuff to your FaceDetailer prompt</face>.
-- **Auto Extract Tags** From String: Good to run at the end of your other tag processing nodes, to remove any leftovers. Additionally, if the input contains a tag with an ! like `<!eye>` then the contents of any <eye> tags will be removed. You could use this to replace `blink` in your prompt with `blink <!eye>`, so when you want to quickly make your character blink, you can just add "blink" to your prompt and it will automatically remove any descriptions of eyes. (As long as your eyes are tagged properly)
-- **Regex Operations**: Exactly that.
-
 ## WAN 2.2 Nodes
 
 ![](docs/screenshot_wan22.png)
@@ -97,3 +89,13 @@ The main rendering node. Handles the full image-to-video pipeline internally:
 Outputs decoded video frames and the FPS value for use by downstream nodes (e.g. a video combine node, or a frame interpolation node).
 
 SAGE Attention: If you have [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) AND [SageAttention + Triton](https://civitai.com/articles/12848/step-by-step-guide-series-comfyui-installing-sageattention-2) installed, the Render node will automatically attempt to patch the models with SAGE Attention. This can result in a significant speed boost, in the case of my RTX 5080 about a 33% faster generation for identical results.
+
+## Misc Nodes
+These are auxillary nodes that contain smaller bits of functionality found in the bigger nodes, or complement them.
+- **Load Image From Directory**: Allows you to specify a directory, then load an image based on its alphabetical order and an index. Useful for processing a whole folder of images in image-to-image or image-to-video workflows.
+- **Regex Operations**: Exactly that.
+- **CivitAI Model Downloader**: I wasn't happy with the one that's online so I made my own. You can enter a model ID, your API key, a desired folder path, file name, and even model version name, and it will download it. Will automatically place checkpoints and LoRAs in the appropriate folders.
+- **Stable Random Choice**: I wasn't happy with how ComfyUI or WildCardProcessor handles randomized elements of a prompt, such as {red|green|blue}, particularly when a lot of such randomized elements were in a prompt. When you modify the prompt without adding or removing any randomized elements, you might get a totally different result. Not with this node. Only if you add or remove random elements.
+- **Tidy Prompt**: Adds commas at end of lines, removes lines starting with `#`, remove excess commas.
+- **Extract Tag From String**: Kinda like an HTML tag, eg. if the input string is `a girl with <eye>blue eyes</eye>`, this node will extract the `blue eyes` part if you ask it to extract the `eye` tag. Useful for not having to jump between so many different input boxes for prompts, since you can eg. use <neg>to send stuff to your negative prompt</neg> or <face>to send stuff to your FaceDetailer prompt</face>.
+- **Auto Extract Tags From String**: Good to run at the end of your other tag processing nodes, to remove any leftovers. Additionally, if the input contains a tag with an ! like `<!eye>` then the contents of any <eye> tags will be removed. You could use this to replace `blink` in your prompt with `blink <!eye>`, so when you want to quickly make your character blink, you can just add "blink" to your prompt and it will automatically remove any descriptions of eyes. (As long as your eyes are tagged properly)
