@@ -2,7 +2,7 @@ import re, json, hashlib
 from pathlib import Path
 
 from .dataclasses import LoRAConfig, CheckpointConfig
-from .nodes_prompt_tags import randomize_prompt, tidy_prompt, extract_tag_from_text
+from .nodes_string import randomize_prompt, tidy_prompt, extract_tag_from_text
 from .nodes_downloader import DownloadCivitaiModel
 import time
 from collections import OrderedDict

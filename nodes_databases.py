@@ -1,7 +1,7 @@
 import os
 
 from .dataclasses import CheckpointConfig, LoRAConfig
-from .nodes_prompt_tags import remove_comment_lines
+from .nodes_string import remove_comment_lines
 import folder_paths
 
 import comfy.samplers

@@ -168,7 +168,6 @@ class StableRandomChoiceNode:
         randomized = randomize_prompt(prompt, seed)
         return (randomized, )
 
-
 def randomize_prompt(prompt, seed=0) -> str:
     """
     Process the input text, recursively replacing each {...|...} group
@@ -228,7 +227,6 @@ def randomize_prompt(prompt, seed=0) -> str:
 def get_words(text: str):
     return [w.strip().lower() for w in text.split(",")]
 
-
 class PromptTidy:
     NAME="Tidy Prompt"
     @classmethod
@@ -272,3 +270,38 @@ def tidy_prompt(prompt: str) -> str:
 
 def remove_comment_lines(prompt: str) -> str:
     return re.sub(r"#.*", "", prompt)
+
+
+class StringSplit:
+    NAME = "String Split"
+
+    @classmethod
+    def INPUT_TYPES(cls) -> dict:
+        return {
+            "required": {
+                "text":  ("STRING", {"multiline": True,  "default": "", "tooltip": "The text to split."}),
+                "index": ("INT",    {"default": 0, "min": 0, "max": 0xffffffffffffffff, "control_after_generate": "increment", "tooltip": "Index of the part to return after splitting."}),
+            },
+            "optional": {
+                "delimiter": ("STRING", {"default": "", "tooltip": "String to split by. Leave empty to split by newline."}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "INT", "STRING")
+    RETURN_NAMES = ("string", "total", "parts")
+    OUTPUT_IS_LIST = (False, False, True)
+    OUTPUT_TOOLTIPS = (
+        "The string at the given index after splitting.",
+        "Total number of parts after splitting.",
+        "All parts as a list.",
+    )
+    FUNCTION = "execute"
+    CATEGORY = "Met's Nodes/String"
+
+    def execute(self, text: str, index: int, delimiter: str = "") -> tuple[str, int, list[str]]:
+        sep = delimiter if delimiter else "\n"
+        parts = [p for p in text.split(sep) if p.strip()]
+        if not parts:
+            return ("", 0, [])
+        return (parts[index % len(parts)], len(parts), parts)
+
