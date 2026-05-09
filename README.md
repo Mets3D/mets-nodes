@@ -1,3 +1,8 @@
+This node pack has two sets of nodes:
+- [Render Pass Nodes](#render-pass-nodes)
+- [WAN 2.2 Nodes](#wan-22-nodes)
+
+# Render Pass Nodes
 These nodes aim to enable workflows involving complex prompt randomization, and chaining the renders of multiple different checkpoints together.
 
 ![](docs/screenshot.png)
@@ -8,7 +13,6 @@ You can drag [this](docs/example.png) image into ComfyUI for an example workflow
 - Chain together Render Pass nodes with different checkpoints. Eg., one model might work well with a LoRA, but you want to use the style of another model. Or one anime checkpoint is great at generating a pose you like, but you want to then render over it with a realistic checkpoint.
 - Randomize your prompt in a highly controlled way by defining "tags", which you can reference in your prompt to replace a keyword with all the prompt words that describe it. For example, once you define a prompt which describes a character, you can always bring that character into your prompt with a single keyword, eg. `<miku>`. You can also define random variations within these tags, such as different outfits, hairstyles, etc, with the usual `{option a|option b}` syntax.
 
-## Nodes
 #### Render Pass
 This node includes a sampler, and is designed to be chainable, to allow conveniently building a workflow which chains multiple checkpoints together. For example, your first Render Pass could take an Empty Image as an input, and fully replace it with noise (txt2img), and then a 2nd render pass can take the result, upscale by 50%, and add 50% noise (img2img).
 
@@ -60,3 +64,36 @@ The functionality of these nodes is built into the RenderPass node, but you can 
 - **Extract Tag From String**: Kinda like an HTML tag, eg. if the input string is `a girl with <eye>blue eyes</eye>`, this node will extract the `blue eyes` part if you ask it to extract the `eye` tag. Useful for not having to jump between so many different input boxes for prompts, since you can eg. use <neg>to send stuff to your negative prompt</neg> or <face>to send stuff to your FaceDetailer prompt</face>.
 - **Auto Extract Tags** From String: Good to run at the end of your other tag processing nodes, to remove any leftovers. Additionally, if the input contains a tag with an ! like `<!eye>` then the contents of any <eye> tags will be removed. You could use this to replace `blink` in your prompt with `blink <!eye>`, so when you want to quickly make your character blink, you can just add "blink" to your prompt and it will automatically remove any descriptions of eyes. (As long as your eyes are tagged properly)
 - **Regex Operations**: Exactly that.
+
+## WAN 2.2 Nodes
+
+![](docs/screenshot_wan22.png)
+
+You can drag [this](docs/example_wan22_i2v.png) image into ComfyUI for an example workflow showing off most of the features.
+
+Tired of juggling two models, two LoRA stacks, and two samplers just to run a single WAN 2.2 generation? These nodes help de-duplicate these noodles, and compact a complete WAN 2.2 video generation workflow with LoRAs into an elegant small node set-up.
+
+#### WAN 2.2 Dual Model
+Create a complete model definition for WAN 2.2 by choosing the high and low noise models. You also don't need to worry about whether it's a GGUF model or not. However, if you do choose a GGUF model, you do need to have [ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) installed, otherwise an error will tell you so.
+
+#### WAN 2.2 Dual LoRA
+Bundles the high and low noise halves of LoRAs together with an **activation keyword** into a single output. The keyword is used to reference this pair in prompts via one of these syntaxes:
+- `<lora:keyword>` - The LoRA with the matching keyword will be applied to both high and low noise models with a weight of 1.0.
+- `<lora:keyword:weight>` - The LoRA with the matching keyword will be applied to both high and low noise models with the specified weight value.
+- `<lora:keyword:high_weight:low_weight>` - The LoRA with the matching keyword will be applied to both high and low noise models with the corresponding weight value.
+
+#### WAN 2.2 LoRA Stacker
+Accepts a dynamic number of Dual LoRA inputs — a new input slot appears automatically each time you connect one. Outputs a list of all connected LoRA pairs for use by the Render node.
+
+#### WAN 2.2 Render
+The main rendering node. Handles the full image-to-video pipeline internally:
+- Rescales the start image to the chosen resolution while preserving aspect ratio
+- Loads the CLIP encoder, VAE, and both high and low noise models
+- Parses and applies any LoRAs referenced in the prompt
+- Encodes prompts and prepares latents
+- Runs the high-noise sampling pass, then hands off to the low-noise pass at the step defined by the switch factor
+- VAE-decodes and returns the final frames
+
+Outputs decoded video frames and the FPS value for use by downstream nodes (e.g. a video combine node, or a frame interpolation node).
+
+SAGE Attention: If you have [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) AND [SageAttention + Triton](https://civitai.com/articles/12848/step-by-step-guide-series-comfyui-installing-sageattention-2) installed, the Render node will automatically attempt to patch the models with SAGE Attention. This can result in a significant speed boost, in the case of my RTX 5080 about a 33% faster generation for identical results.
