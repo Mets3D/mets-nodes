@@ -1,21 +1,14 @@
-import math
 import re
 from typing import Any, TypeAlias
 
-import torch.nn.functional as F
 from torch import Tensor
 
 import folder_paths
 from nodes import CLIPLoader, CLIPTextEncode, KSamplerAdvanced, LoraLoader, UNETLoader, VAEDecode, VAELoader
 from comfy_extras.nodes_wan import WanImageToVideo
+from .nodes_image import _rescale_to_pixel_count, _RESOLUTIONS
 
 _LORA_TAG_RE: re.Pattern[str] = re.compile(r'<lora:([^:>]+)(?::([-+]?[0-9]*\.?[0-9]+)(?::([-+]?[0-9]*\.?[0-9]+))?)?>')
-
-_RESOLUTIONS: list[str] = ["High (1280x720 Pixel Count)", "Low (480x854 Pixel Count)"]
-_PIXEL_COUNTS: dict[str, int] = {
-    "High (1280x720 Pixel Count)": 1280 * 720,
-    "Low (480x854 Pixel Count)":   480 * 854,
-}
 
 # ComfyUI MODEL is an opaque runtime type
 _Model: TypeAlias = Any
@@ -24,24 +17,6 @@ _Model: TypeAlias = Any
 WanDualLoRA:     TypeAlias = tuple[str, str, str]          # (high_lora, low_lora, keyword)
 WanDualModel:    TypeAlias = tuple[str, str]               # (high_model, low_model)
 WanLoRAResolved: TypeAlias = tuple[str, str, float, float] # (high_lora, low_lora, high_weight, low_weight)
-
-
-def _rescale_to_pixel_count(image: Tensor, resolution_mode: str) -> Tensor:
-    """Scale image to match the target pixel count while preserving aspect ratio.
-    Output dimensions are snapped to multiples of 8 for VAE compatibility."""
-    _, orig_h, orig_w, _ = image.shape
-    target_pixels = _PIXEL_COUNTS[resolution_mode]
-    scale = math.sqrt(target_pixels / (orig_w * orig_h))
-    target_w = (round(orig_w * scale) // 8) * 8
-    target_h = (round(orig_h * scale) // 8) * 8
-    if target_w == orig_w and target_h == orig_h:
-        return image
-    return F.interpolate(
-        image.permute(0, 3, 1, 2),
-        size=(target_h, target_w),
-        mode='bilinear',
-        align_corners=False,
-    ).permute(0, 2, 3, 1)
 
 
 def _load_unet(filename: str) -> _Model:

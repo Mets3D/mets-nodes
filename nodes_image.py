@@ -1,11 +1,62 @@
-from torch import Tensor, is_tensor
-from nodes import PreviewImage
+import math
 from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image, ImageOps
+from torch import Tensor, is_tensor
+from nodes import PreviewImage
+
 import asyncio
+
+_RESOLUTIONS: list[str] = ["High (1280x720 Pixel Count)", "Low (480x854 Pixel Count)"]
+_PIXEL_COUNTS: dict[str, int] = {
+    "High (1280x720 Pixel Count)": 1280 * 720,
+    "Low (480x854 Pixel Count)":   480 * 854,
+}
+
+
+def _rescale_to_pixel_count(image: Tensor, resolution: str) -> Tensor:
+    """Scale image to match the target pixel count while preserving aspect ratio.
+    Output dimensions are snapped to multiples of 8 for VAE compatibility."""
+    _, orig_h, orig_w, _ = image.shape
+    target_pixels = _PIXEL_COUNTS[resolution]
+    scale = math.sqrt(target_pixels / (orig_w * orig_h))
+    target_w = (round(orig_w * scale) // 8) * 8
+    target_h = (round(orig_h * scale) // 8) * 8
+    if target_w == orig_w and target_h == orig_h:
+        return image
+    return F.interpolate(
+        image.permute(0, 3, 1, 2),
+        size=(target_h, target_w),
+        mode='bilinear',
+        align_corners=False,
+    ).permute(0, 2, 3, 1)
+
+
+class RescaleToPixelCount:
+    NAME = "Rescale to Pixel Count"
+
+    @classmethod
+    def INPUT_TYPES(cls) -> dict:
+        return {
+            "required": {
+                "image": ("IMAGE", {"tooltip": "Image to rescale."}),
+                "resolution": (_RESOLUTIONS, {
+                    "default": _RESOLUTIONS[0],
+                    "tooltip": "Target pixel count. The image is rescaled to match this pixel budget while preserving aspect ratio.",
+                }),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("image",)
+    FUNCTION = "rescale"
+    CATEGORY = "Met's Nodes/Image"
+
+    def rescale(self, image: Tensor, resolution: str) -> tuple[Tensor]:
+        return (_rescale_to_pixel_count(image, resolution),)
 
 class AdjustImageNode(PreviewImage):
     @classmethod
