@@ -63,7 +63,7 @@ class RenderPass:
     FUNCTION = "render_pass_execute"
     CATEGORY = "Met's Nodes/Render Pass"
     DESCRIPTION="""Render an image with the data provided."""
-    OUTPUT_NODE = True
+    # OUTPUT_NODE = True
 
     def render_pass_execute(self, data, checkpoint_name, noise, image=None, scale=1.0, prompt_pos="", prompt_neg="", is_prompt_additive=True):
         # We want to make a copy of the passed data, otherwise Comfy might send us back 
@@ -208,7 +208,7 @@ class RenderPass_Face:
     FUNCTION = "face_pass_execute"
     CATEGORY = "Met's Nodes/Render Pass"
     DESCRIPTION="""Simplified wrapper for the Impact Pack's FaceDetailer node."""
-    OUTPUT_NODE = True
+    # OUTPUT_NODE = True
 
     def face_pass_execute(self, data, image, noise, iterations, prompt_pos, prompt_neg):
         try:
