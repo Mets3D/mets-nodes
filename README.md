@@ -25,17 +25,18 @@ Combines data from the below nodes, and lets you provide a CivitAI API key (whic
 It also provides two seed values; One for the noise, and one for the prompt randomization. All of this combined can provide the Render Pass node with everything it needs to make your prompting and workflow sharing more convenient.
 
 **Built-in tags:**
-- `<!>this text</!>` will be moved to the top of the prompt, making it more likely that it will be adhered to.
-- `<neg>this text</neg>` will be moved to the negative prompt.
-- `<face>this text</face>` will be sent to the Face Render Pass node's prompt.
+- `<!>these, important, tags</!>` will be moved to the top of the prompt, making it more likely that it will be adhered to.
+- `<neg>these, bad, tags</neg>` will be moved to the negative prompt. Also, matching tags will be removed from other parts of the positive prompt.
+- `<face>these, face, tags</face>` will be sent to the Face Render Pass node's prompt.
 - You can also define arbitrary tags, for example, let's say you want to be able to exclude eyes without having to delete them from the prompt every time: `<eye>blue eyes</eye>`. Then, you can include `<!eye>` in your prompt, which will cause the contents of any <eye> tags to be excluded from the final prompt.
-- `<ratio:landscape>`/`<ratio:square>`/`<ratio:portrait>` will override your image resolution by flipping or averaging your starting image's width/height.
+- `<ratio:landscape>`/`<ratio:square>`/`<ratio:portrait>` will override your image resolution by flipping or averaging your starting image's width/height as needed.
 - `<!modelprompt>` will exclude the base prompt associated with the checkpoint, which is defined in the Prepare Checkpoint node, and is normally prepended to your prompt.
 
 #### Tag Stacker
 Make a single "tag" available in your prompt. For example, lets you define a tag called `random clothes` with the contents `{jacket|shirt|tanktop|bikini}`. Later, if you type `<random clothes>` in the prompt for the RenderPass node, it will replace that tag with the provided contents.
 - This node can be chained together to build up a database of tags.
 - Tags can also include tags (Avoiding infinite loops is up to you!)
+- The prompt's tags are resolved left-to-right. To define an incompatibility, you can use `~~undesired_tag~~`. For example if you put `~~jacket~~ <random clothes>` then it will pick a random clothing that doesn't contain the tag `jacket`. For this, the order matters, the exclusion tag has to come first.
 
 #### Tag Tweaker
 Search & replace in your tag database. Useful if you find yourself typing out combinations of prompt elements often, but don't want to define a tag for them, because you don't want to use them in your final prompt.

@@ -96,7 +96,7 @@ class Wan22DualModel:
 
     @classmethod
     def INPUT_TYPES(cls) -> dict:
-        models = folder_paths.get_filename_list("diffusion_models") + folder_paths.get_filename_list("unet_gguf") + folder_paths.get_filename_list("unet")
+        models = folder_paths.get_filename_list("diffusion_models") + folder_paths.get_filename_list("unet") #+ folder_paths.get_filename_list("unet_gguf")
         return {
             "required": {
                 "high_noise_model": (models, {"tooltip": "Diffusion model used during the high-noise (early) sampling pass.",}),
