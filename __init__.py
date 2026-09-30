@@ -7,6 +7,7 @@ from .nodes_databases import PrepareCheckpoint, PrepareLoRA, TagStacker, TagTwea
 from .nodes_image import AdjustImageNode, LoadImageFromDirectory, RescaleToPixelCount
 from .nodes_render_pass import RenderPass, RenderPass_Prepare, RenderPass_Face, SplitData, MergeData
 from .nodes_wan22 import Wan22DualLoRA, Wan22DualModel, Wan22LoRAStacker, Wan22Render
+from . import open_workflows  # noqa: F401 - registers the /mets/open_workflows routes
 
 WEB_DIRECTORY = "./web"
 
