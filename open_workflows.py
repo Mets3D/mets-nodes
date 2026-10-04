@@ -104,8 +104,11 @@ def _register_routes() -> None:
         async def get_graph(request: web.Request) -> web.Response:
             # ?path=<workflow path as listed by /mets/open_workflows>; omit for the active tab.
             # ?client_id=... picks one browser window; omit to take the first that answers.
+            # ?include_draft=1 also returns the tab's auto-saved localStorage draft (read-only)
+            # plus the file's last-modified time the frontend knows.
             result = await _ask_browser("mets-open-workflows-request-graph", {
                 "path": request.query.get("path"), "client_id": request.query.get("client_id"),
+                "include_draft": request.query.get("include_draft") in ("1", "true"),
             })
             if result.get("source") == "not_loaded" and result.get("path"):
                 # Tab not visited since page load - what it would show is the saved file.
@@ -121,9 +124,14 @@ def _register_routes() -> None:
         async def edit(request: web.Request) -> web.Response:
             # Body: {"ops": [{"op": "set_widget", "node": 12, "widget": "text", "value": "..."},
             #                {"op": "set_title", "node": 12, "title": "..."},
-            #                {"op": "set_mode", "node": 12, "mode": "always" | "mute" | "bypass"}],
-            #        "path": optional - must be the active tab, "client_id": optional}
-            # Applied to the active tab's live canvas as one undoable change, all-or-nothing.
+            #                {"op": "set_mode", "node": 12, "mode": "always" | "mute" | "bypass"},
+            #                {"op": "reconfigure", "node": 12},  <- node re-reads its widgets (custom-UI nodes)
+            #                {"op": "activate", "path": "workflows/foo.json"},  <- switch tabs first
+            #                {"op": "refresh_combos"},           <- reload dropdown lists before the edits
+            #                {"op": "queue", "batch_count": 1}],                <- press Run last
+            #        "path": optional - must be the active tab (after any activate), "client_id": optional}
+            # Applied to the active tab's live canvas as one undoable change, all-or-nothing
+            # (except "activate", which happens first and stays even if a later op is invalid).
             data = await request.json()
             result = await _ask_browser("mets-open-workflows-edit", {
                 "ops": data.get("ops", []), "path": data.get("path"), "client_id": data.get("client_id"),

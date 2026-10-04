@@ -58,7 +58,32 @@ async function serializeWorkflow(wf) {
     return { graph: null, source: "not_loaded" };
 }
 
-async function answerGraphRequest({ request_id, path, client_id }) {
+// Read (never modify) the auto-saved draft the frontend keeps in localStorage for a
+// workflow path. Mirrors the frontend's draft store v2 layout:
+//   "Comfy.Workflow.DraftIndex.v2:<workspace>" -> {entries: {<hash>: {path, ...}}}
+//   "Comfy.Workflow.Draft.v2:<workspace>:<hash>" -> {data: "<graph json>", updatedAt}
+// Useful because loading a tab deletes its draft if the file on disk is newer.
+function readDraft(path) {
+    const indexPrefix = "Comfy.Workflow.DraftIndex.v2:";
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key?.startsWith(indexPrefix)) continue;
+        const workspace = key.slice(indexPrefix.length);
+        try {
+            const index = JSON.parse(localStorage.getItem(key));
+            for (const [hash, entry] of Object.entries(index?.entries ?? {})) {
+                if (entry?.path !== path) continue;
+                const payload = JSON.parse(localStorage.getItem(`Comfy.Workflow.Draft.v2:${workspace}:${hash}`));
+                if (payload?.data) return { workspace, updatedAt: payload.updatedAt, graph: JSON.parse(payload.data) };
+            }
+        } catch (e) {
+            console.warn("[Mets] open_workflows: could not read draft index", key, e);
+        }
+    }
+    return null;
+}
+
+async function answerGraphRequest({ request_id, path, client_id, include_draft }) {
     if (client_id && client_id !== api.clientId) return;
     const store = workflowStore();
     let result;
@@ -71,8 +96,13 @@ async function answerGraphRequest({ request_id, path, client_id }) {
             filename: wf.filename,
             active: wf === store.activeWorkflow,
             modified: !!wf.isModified,
+            loaded: !!wf.isLoaded,
             ...(await serializeWorkflow(wf)),
         };
+        if (include_draft) {
+            result.file_last_modified = wf.lastModified ?? null;
+            result.draft = readDraft(wf.path);
+        }
     }
     await respond(request_id, result);
 }
@@ -112,31 +142,72 @@ function resolveOp(graph, op) {
                 return { old, new: node.mode };
             } };
         }
+        case "reconfigure":
+            // Re-apply the node's own current state via configure(). Nodes with a custom UI
+            // that keeps its own copy of widget data (e.g. MiniMaxH3Extender's clip cards)
+            // re-read their widgets in onConfigure; without this they keep showing, and
+            // later write back, the values from before a set_widget.
+            return { node, apply: () => {
+                node.configure(node.serialize());
+                return {};
+            } };
         default:
             throw new Error(`unknown op ${JSON.stringify(op.op)}`);
     }
 }
 
+// Switch the browser to an already-open tab, the same way clicking the tab does
+// (mirrors the frontend's internal workflowService.openWorkflow). A tab not visited
+// since page load gets load()ed first, which applies any auto-saved draft - exactly
+// what a user click would do.
+async function activateWorkflow(path) {
+    const store = workflowStore();
+    const wf = store?.openWorkflows?.find((w) => w.path === path);
+    if (!wf) {
+        const open = (store?.openWorkflows ?? []).map((w) => w.path);
+        throw new Error(`workflow not open in this tab: ${path} (open: ${open.join(", ")})`);
+    }
+    if (wf === store.activeWorkflow) return { activated: path, was_active: true };
+    const previous = store.activeWorkflow?.path ?? null;
+    if (!wf.isLoaded) await wf.load();
+    await app.loadGraphData(wf.activeState, true, true, wf, { checkForRerouteMigration: false, deferWarnings: true });
+    if (store.activeWorkflow !== wf) throw new Error(`switching to ${path} did not take effect`);
+    return { activated: path, previous };
+}
+
 async function answerEditRequest({ request_id, ops, path, client_id }) {
     if (client_id && client_id !== api.clientId) return;
-    const wf = workflowStore()?.activeWorkflow;
     let result;
     try {
+        // {"op": "activate", "path": "workflows/x.json"} switches tabs first, so the
+        // remaining ops (and "queue") apply to that tab. It is applied before the other
+        // ops are resolved: if a later op is invalid, the tab stays switched but nothing
+        // is edited.
+        const activateOp = (ops ?? []).find((op) => op.op === "activate");
+        const activation = activateOp ? await activateWorkflow(activateOp.path) : null;
+        const wf = workflowStore()?.activeWorkflow;
         if (!wf) throw new Error("no active workflow");
         if (path && path !== wf.path) throw new Error(`${path} is not the active tab (active: ${wf.path})`);
         const graph = app.rootGraph ?? app.graph;
         // Resolve every op before applying any, so a bad op leaves the canvas untouched.
         // {"op": "queue", "batch_count": n} is not a node edit: it presses Run after the edits.
-        const editOps = (ops ?? []).filter((op) => op.op !== "queue");
+        // {"op": "refresh_combos"} reloads the dropdown lists (files in input/, models, ...)
+        // before the edits, so a file staged since page load can be selected.
+        const nonNodeOps = ["queue", "activate", "refresh_combos"];
+        const editOps = (ops ?? []).filter((op) => !nonNodeOps.includes(op.op));
         const queueOp = (ops ?? []).find((op) => op.op === "queue");
+        if ((ops ?? []).some((op) => op.op === "refresh_combos")) await app.refreshComboInNodes();
         const resolved = editOps.map((op) => resolveOp(graph, op));
         const changes = resolved.map((r, i) => ({ ...editOps[i], ...r.apply() }));
-        graph.setDirtyCanvas(true, true);
-        // Record the change like a user edit: marks the tab modified and makes it undoable.
-        const tracker = wf.changeTracker;
-        if (tracker?.captureCanvasState) tracker.captureCanvasState();
-        else tracker?.checkState?.();
+        if (changes.length) {
+            graph.setDirtyCanvas(true, true);
+            // Record the change like a user edit: marks the tab modified and makes it undoable.
+            const tracker = wf.changeTracker;
+            if (tracker?.captureCanvasState) tracker.captureCanvasState();
+            else tracker?.checkState?.();
+        }
         result = { path: wf.path, changes };
+        if (activation) result.activation = activation;
         if (queueOp) {
             // Same call as the Run button, so the full workflow is embedded in the outputs.
             await app.queuePrompt(0, queueOp.batch_count ?? 1);
