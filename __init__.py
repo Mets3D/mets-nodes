@@ -4,9 +4,10 @@ from .nodes_string import (
 )
 from .nodes_downloader import DownloadCivitaiModel
 from .nodes_databases import PrepareCheckpoint, PrepareLoRA, TagStacker, TagTweaker, ExtraCheckpointData
-from .nodes_image import AdjustImageNode, LoadImageFromDirectory, RescaleToPixelCount
+from .nodes_image import AdjustImageNode, LoadImageFromDirectory, RescaleToPixelCount, ResizeMegapixels
 from .nodes_render_pass import RenderPass, RenderPass_Prepare, RenderPass_Face, SplitData, MergeData
 from .nodes_wan22 import Wan22DualLoRA, Wan22DualModel, Wan22LoRAStacker, Wan22Render
+from .nodes_lora import LoraTagStack
 from . import open_workflows  # noqa: F401 - registers the /mets/open_workflows routes
 
 WEB_DIRECTORY = "./web"
@@ -16,7 +17,7 @@ nodes = [
     DownloadCivitaiModel, PrepareCheckpoint, PrepareLoRA, TagStacker, TagTweaker, AdjustImageNode,
     RenderPass, RenderPass_Prepare, RenderPass_Face, SplitData, ExtraCheckpointData, MergeData,
     Wan22DualLoRA, Wan22DualModel, Wan22LoRAStacker, Wan22Render,
-    LoadImageFromDirectory, RescaleToPixelCount, StringSplit,
+    LoadImageFromDirectory, RescaleToPixelCount, ResizeMegapixels, StringSplit, LoraTagStack,
 ]
 
 NODE_CLASS_MAPPINGS = {node.__name__: node for node in nodes}

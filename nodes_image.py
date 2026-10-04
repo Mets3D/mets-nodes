@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image, ImageOps
 from torch import Tensor, is_tensor
-from nodes import PreviewImage
+from nodes import MAX_RESOLUTION, PreviewImage
 
 import asyncio
 
@@ -57,6 +57,42 @@ class RescaleToPixelCount:
 
     def rescale(self, image: Tensor, resolution: str) -> tuple[Tensor]:
         return (_rescale_to_pixel_count(image, resolution),)
+
+
+class ResizeMegapixels:
+    NAME = "Resize to Megapixels"
+
+    @classmethod
+    def INPUT_TYPES(cls) -> dict:
+        return {
+            "required": {
+                "width": ("INT", {
+                    "default": 1024, "min": 1, "max": MAX_RESOLUTION,
+                    "tooltip": "Input width in pixels.",
+                }),
+                "height": ("INT", {
+                    "default": 1024, "min": 1, "max": MAX_RESOLUTION,
+                    "tooltip": "Input height in pixels.",
+                }),
+                "megapixels": ("FLOAT", {
+                    "default": 1.0, "min": 0.01, "max": 100.0, "step": 0.01,
+                    "tooltip": "Target size in megapixels (1 MP = 1024x1024 pixels, as in ComfyUI's own scale-to-total-pixels nodes).",
+                }),
+            }
+        }
+
+    RETURN_TYPES = ("INT", "INT")
+    RETURN_NAMES = ("width", "height")
+    OUTPUT_TOOLTIPS = (
+        "Resized width, rounded to the nearest pixel.",
+        "Resized height, rounded to the nearest pixel.",
+    )
+    FUNCTION = "resize"
+    CATEGORY = "Met's Nodes/Image"
+
+    def resize(self, width: int, height: int, megapixels: float) -> tuple[int, int]:
+        scale = math.sqrt(megapixels * 1024 * 1024 / (width * height))
+        return (max(1, round(width * scale)), max(1, round(height * scale)))
 
 
 class AdjustImageNode(PreviewImage):
